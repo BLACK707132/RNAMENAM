@@ -1,6 +1,0 @@
-{
-  "name": "Стант на самокате",
-  "description": "Аркадная игра про вилли и трюки на электросамокатах С3, Kugoo G2, G2 Master и Kugoo F3.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
