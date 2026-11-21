@@ -11,7 +11,7 @@ import {
   Link2,
   CheckCircle2,
   AlertCircle,
-  WifiOff,
+  ShieldCheck,
   ArrowUpRight,
   ArrowDownLeft,
   Pencil,
@@ -21,12 +21,13 @@ import {
   appendTransferHistory,
   buildReceiveLink,
   buildReceiveShortCode,
+  checkTransferStatusOnline,
   createOfflineTransferCheck,
   formatWalletId,
   loadTransferHistory,
   loadWalletProfile,
-  markCheckRedeemed,
   parseRecipientInput,
+  redeemTransferCheckOnline,
   saveWalletProfile,
   validateIncomingCheck,
   type TransferRecord,
@@ -71,7 +72,6 @@ export function TransferModal({
   );
   const [amountInput, setAmountInput] = useState('');
   const [commentInput, setCommentInput] = useState('');
-  const [lockToWallet, setLockToWallet] = useState(true);
   const [sendError, setSendError] = useState('');
   const [createdTransfer, setCreatedTransfer] = useState<{
     code: string;
@@ -92,6 +92,8 @@ export function TransferModal({
     comment?: string;
   } | null>(null);
   const [claimError, setClaimError] = useState('');
+  const [claiming, setClaiming] = useState(false);
+  const [serverClaimedStatus, setServerClaimedStatus] = useState<'idle' | 'checking' | 'redeemed'>('idle');
   const [requestAmountInput, setRequestAmountInput] = useState('');
 
   // History state
@@ -124,6 +126,30 @@ export function TransferModal({
     if (!claimInput.trim()) return null;
     return validateIncomingCheck(claimInput, wallet.walletId);
   }, [claimInput, wallet.walletId]);
+
+  const liveCheckCode = liveClaimCheck?.ok ? liveClaimCheck.check.code : '';
+
+  // Verify on server whether a pasted/opened link has already been claimed globally
+  useEffect(() => {
+    if (!liveCheckCode) {
+      setServerClaimedStatus('idle');
+      return;
+    }
+    let active = true;
+    setServerClaimedStatus('checking');
+    checkTransferStatusOnline(liveCheckCode).then((res) => {
+      if (!active) return;
+      if (res.checked && res.redeemed) {
+        setServerClaimedStatus('redeemed');
+        setClaimError('Этот перевод уже забрали! Одна ссылка работает только 1 раз.');
+      } else {
+        setServerClaimedStatus('idle');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [liveCheckCode]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -209,8 +235,8 @@ export function TransferModal({
       return;
     }
 
-    if (parsedRecipient.kind === 'invalid') {
-      setSendError('Не удалось распознать ссылку или ID получателя.');
+    if (parsedRecipient.kind !== 'wallet' || !parsedRecipient.walletId) {
+      setSendError('Сначала вставь ссылку на получение (?pay=BS-...) или ID BS-XXXXXX того, кто её кинул!');
       return;
     }
 
@@ -232,14 +258,9 @@ export function TransferModal({
       return;
     }
 
-    const targetWalletId =
-      parsedRecipient.kind === 'wallet' && lockToWallet
-        ? parsedRecipient.walletId
-        : undefined;
-
     const created = createOfflineTransferCheck({
       amount: parsedSendAmount,
-      targetWalletId,
+      targetWalletId: parsedRecipient.walletId,
       senderName: wallet.nickname,
       comment: commentInput,
     });
@@ -270,39 +291,46 @@ export function TransferModal({
     setCommentInput('');
   };
 
-  const handleClaimSubmit = (e: React.FormEvent) => {
+  const handleClaimSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (claiming) return;
     setClaimError('');
     setClaimSuccess(null);
+    setClaiming(true);
 
-    const validation = validateIncomingCheck(claimInput, wallet.walletId);
-    if (!validation.ok) {
-      setClaimError(validation.message);
+    const res = await redeemTransferCheckOnline(claimInput, wallet.walletId);
+    setClaiming(false);
+
+    if (!res.ok) {
+      if (res.reason === 'already_redeemed') {
+        setServerClaimedStatus('redeemed');
+      }
+      setClaimError(res.message);
       return;
     }
 
-    markCheckRedeemed(validation.check);
-    onCreditCoins(validation.check.amount);
+    onCreditCoins(res.check.amount);
     sound.playBuy();
 
     const record: TransferRecord = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       type: 'received',
-      amount: validation.check.amount,
-      counterparty: validation.check.fromName || 'Офлайн-перевод',
-      targetWallet: validation.check.targetWallet,
-      code: validation.check.code,
+      amount: res.check.amount,
+      counterparty: res.check.fromName || 'Перевод монет',
+      targetWallet: res.check.targetWallet,
+      code: res.check.code,
       link: '',
-      comment: validation.check.comment,
+      comment: res.check.comment,
       createdAt: Date.now(),
     };
     setHistory(appendTransferHistory(record));
     setClaimSuccess({
-      amount: validation.check.amount,
-      fromName: validation.check.fromName,
-      comment: validation.check.comment,
+      amount: res.check.amount,
+      fromName: res.check.fromName,
+      comment: res.check.comment,
     });
     setClaimInput('');
+    setServerClaimedStatus('idle');
   };
 
   const reqAmtNum = Math.floor(Number(requestAmountInput.replace(/\s+/g, '')) || 0);
@@ -311,7 +339,7 @@ export function TransferModal({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-40 flex items-start justify-center p-3 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(12px, env(safe-area-inset-top, 12px))',
         paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
@@ -326,8 +354,8 @@ export function TransferModal({
                 Переводы монет
               </h2>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/25 text-[10px] font-bold text-emerald-300 uppercase tracking-wide">
-                <WifiOff className="w-3 h-3" />
-                Офлайн
+                <ShieldCheck className="w-3 h-3" />
+                1 активация
               </span>
             </div>
             <div className="text-xs sm:text-sm text-[#ffd34d] font-bold font-mono-num mt-0.5">
@@ -489,7 +517,7 @@ export function TransferModal({
                 )}
 
                 <p className="text-xs text-white/75 leading-relaxed">
-                  Отправь эту ссылку или короткий код другу (в чат, SMS или продиктуй без интернета). Как только он откроет ссылку или введёт код — монеты зачислятся ему!
+                  Отправь эту ссылку или короткий код получателю. Перевод строго привязан к <b>{formatWalletId(createdTransfer.targetWallet)}</b> и работает ровно <b>1 раз</b> — никто другой забрать его не сможет!
                 </p>
 
                 {/* Short offline code */}
@@ -635,35 +663,29 @@ export function TransferModal({
                     )}
 
                     {parsedRecipient.kind === 'wallet' && (
-                      <div className="space-y-1.5">
+                      <div className="space-y-1">
                         <div className="flex items-center gap-1.5 text-xs text-emerald-300 font-semibold">
                           <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                           <span>Получатель: {parsedRecipient.label}</span>
                         </div>
-                        <label className="flex items-center gap-2 text-[11px] text-white/65 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={lockToWallet}
-                            onChange={(e) => setLockToWallet(e.target.checked)}
-                            className="accent-[#ff6a1a] rounded"
-                          />
-                          Защитить код: забрать сможет только этот ID
-                        </label>
+                        <div className="text-[11px] text-emerald-200/75">
+                          Защита активна: забрать перевод сможет ТОЛЬКО владелец этой ссылки ({formatWalletId(parsedRecipient.walletId || '')}).
+                        </div>
                       </div>
                     )}
 
                     {parsedRecipient.kind === 'bot_link' && (
-                      <div className="flex items-center gap-1.5 text-xs text-sky-300 font-semibold">
-                        <Link2 className="w-3.5 h-3.5 shrink-0" />
+                      <div className="flex items-center gap-1.5 text-xs text-[#ff938b] font-semibold">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">
-                          Ссылка распознана: {parsedRecipient.label}
+                          Нужна ссылка на получение от игрока (?pay=BS-...) или его ID BS-XXXXXX
                         </span>
                       </div>
                     )}
 
                     {parsedRecipient.kind === 'universal' && (
-                      <p className="text-[11px] text-white/50">
-                        Можно оставить пустым — создастся офлайн-чек для любого друга.
+                      <p className="text-[11px] text-white/55">
+                        Вставь ссылку на получение (?pay=BS-...) или ID BS-XXXXXX друга — забрать перевод сможет только он.
                       </p>
                     )}
 
@@ -750,16 +772,16 @@ export function TransferModal({
                 <button
                   type="submit"
                   disabled={
-                    parsedRecipient.kind === 'invalid' ||
-                    (parsedRecipient.kind !== 'claim_code' &&
-                      (parsedSendAmount < 1 || parsedSendAmount > availableCoins))
+                    parsedRecipient.kind !== 'wallet' ||
+                    parsedSendAmount < 1 ||
+                    parsedSendAmount > availableCoins
                   }
                   className="w-full h-12 rounded-xl bg-[#ff6a1a] hover:bg-[#ff7b33] disabled:opacity-40 disabled:hover:bg-[#ff6a1a] text-white font-display font-bold text-base flex items-center justify-center gap-2 shadow-lg transition"
                 >
                   <Send className="w-4 h-4" />
                   {parsedSendAmount > 0
                     ? `Перевести ${parsedSendAmount.toLocaleString('ru-RU')} 🪙`
-                    : 'Создать офлайн-перевод'}
+                    : 'Создать перевод по ссылке'}
                 </button>
               </form>
             )}
@@ -792,13 +814,13 @@ export function TransferModal({
               />
 
               {/* Live preview */}
-              {liveClaimCheck && liveClaimCheck.ok && (
+              {liveClaimCheck && liveClaimCheck.ok && serverClaimedStatus !== 'redeemed' && (
                 <div className="rounded-lg bg-emerald-500/15 border border-emerald-400/35 px-3 py-2 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs text-emerald-200 font-semibold">
                       {liveClaimCheck.check.fromName
                         ? `Перевод от ${liveClaimCheck.check.fromName}`
-                        : 'Действительный чек'}
+                        : 'Действительный чек (1 активация)'}
                     </div>
                     <div className="font-mono-num text-sm font-black text-emerald-300">
                       +{liveClaimCheck.check.amount.toLocaleString('ru-RU')} 🪙
@@ -846,12 +868,23 @@ export function TransferModal({
 
               <button
                 type="submit"
-                disabled={!liveClaimCheck || !liveClaimCheck.ok}
+                disabled={
+                  claiming ||
+                  serverClaimedStatus === 'redeemed' ||
+                  !liveClaimCheck ||
+                  !liveClaimCheck.ok
+                }
                 className="w-full h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 text-[#07160f] font-display font-black text-sm transition"
               >
-                {liveClaimCheck && liveClaimCheck.ok
-                  ? `Забрать +${liveClaimCheck.check.amount.toLocaleString('ru-RU')} 🪙`
-                  : 'Забрать монеты'}
+                {claiming
+                  ? 'Проверяем и зачисляем...'
+                  : serverClaimedStatus === 'redeemed'
+                    ? 'Уже забрали'
+                    : serverClaimedStatus === 'checking'
+                      ? 'Проверяем ссылку...'
+                      : liveClaimCheck && liveClaimCheck.ok
+                        ? `Забрать +${liveClaimCheck.check.amount.toLocaleString('ru-RU')} 🪙`
+                        : 'Забрать монеты'}
               </button>
             </form>
 

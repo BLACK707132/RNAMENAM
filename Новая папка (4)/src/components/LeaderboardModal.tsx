@@ -32,22 +32,32 @@ export function LeaderboardModal({
   const [fromCache, setFromCache] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    const res = await fetchLeaderboard();
-    setLoading(false);
-    if (!res.ok) {
-      setError(res.error);
-      return;
-    }
-    setData(res.data);
-    setFromCache(Boolean(res.fromCache));
-    onRankLoaded?.(res.data.myRank);
-  }, [onRankLoaded]);
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) {
+        setLoading(true);
+        setError('');
+      }
+      const res = await fetchLeaderboard();
+      if (!opts?.silent) setLoading(false);
+      if (!res.ok) {
+        if (!opts?.silent) setError(res.error);
+        return;
+      }
+      setError('');
+      setData(res.data);
+      setFromCache(Boolean(res.fromCache));
+      onRankLoaded?.(res.data.myRank);
+    },
+    [onRankLoaded]
+  );
 
   useEffect(() => {
     load();
+    const id = window.setInterval(() => {
+      load({ silent: true });
+    }, 8000);
+    return () => window.clearInterval(id);
   }, [load]);
 
   useEffect(() => {
@@ -59,10 +69,14 @@ export function LeaderboardModal({
   }, [onClose]);
 
   const entries: LeaderboardEntry[] = data?.entries ?? [];
+  const onlineTotal =
+    typeof data?.onlineCount === 'number'
+      ? data.onlineCount
+      : entries.filter((e) => e.online || e.isMe).length;
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-40 flex items-start justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
         paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -76,9 +90,17 @@ export function LeaderboardModal({
               <Crown className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-display text-xl sm:text-2xl font-black text-white leading-tight">
-                Топ богатых
-              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-display text-xl sm:text-2xl font-black text-white leading-tight">
+                  Топ богатых
+                </h2>
+                {!fromCache && data && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/30 text-[11px] font-bold text-emerald-300 font-mono-num">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Онлайн: {onlineTotal}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-white/60 mt-0.5">
                 {data
                   ? `Игроков в рейтинге: ${data.totalRegistered.toLocaleString('ru-RU')}`
@@ -90,7 +112,7 @@ export function LeaderboardModal({
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={load}
+              onClick={() => load()}
               disabled={loading}
               aria-label="Обновить топ"
               className="h-9 w-9 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/80 transition disabled:opacity-50"
@@ -138,12 +160,13 @@ export function LeaderboardModal({
           <div className="mb-3.5 rounded-xl bg-[#ff6a1a]/15 border border-[#ff6a1a]/40 px-3.5 py-2.5 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="font-mono-num text-sm font-black text-[#ff8b4a] shrink-0">
-                #{data.myEntry.rank}
+                #{data.myEntry.rank ?? '—'}
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-extrabold text-white truncate">
-                  @{user.username}{' '}
-                  <span className="text-[11px] font-semibold text-[#ff8b4a]">(ты)</span>
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-white truncate">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" title="В сети" />
+                  <span className="truncate">@{user.username}</span>
+                  <span className="text-[11px] font-semibold text-[#ff8b4a] shrink-0">(ты)</span>
                 </div>
                 <div className="text-[11px] text-white/60 truncate">
                   {getScooterLabel(data.myEntry.curScooter)}
@@ -168,7 +191,16 @@ export function LeaderboardModal({
           {loading && entries.length === 0 ? (
             <div className="py-10 text-center text-sm text-white/55">Загружаем Топ богатых...</div>
           ) : error && entries.length === 0 ? (
-            <div className="py-8 text-center text-sm text-[#ff7b72]">{error}</div>
+            <div className="py-8 text-center space-y-2.5">
+              <div className="text-sm text-[#ff7b72]">{error}</div>
+              <button
+                type="button"
+                onClick={() => load()}
+                className="h-9 px-4 rounded-xl bg-white/10 hover:bg-white/16 text-white text-xs font-bold transition"
+              >
+                Повторить
+              </button>
+            </div>
           ) : entries.length === 0 ? (
             <div className="py-10 text-center space-y-2">
               <Trophy className="w-9 h-9 text-[#ffd34d]/60 mx-auto" />
@@ -215,6 +247,14 @@ export function LeaderboardModal({
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            entry.online || entry.isMe
+                              ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
+                              : 'bg-white/20'
+                          }`}
+                          title={entry.online || entry.isMe ? 'В сети' : 'Не в сети'}
+                        />
                         {entry.clanTag && (
                           <span
                             className="text-[10px] font-extrabold px-1.5 py-0.5 rounded border shrink-0"

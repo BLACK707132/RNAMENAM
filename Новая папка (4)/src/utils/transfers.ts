@@ -1,3 +1,5 @@
+import { apiJsonFetch, getStoredToken } from './accountApi';
+
 export interface WalletProfile {
   walletId: string; // 6-char raw ID, displayed as BS-XXXXXX
   nickname: string;
@@ -36,6 +38,10 @@ export interface ParsedRecipient {
 export type CheckValidationResult =
   | { ok: true; check: ParsedCheck; isOwnWalletTarget: boolean }
   | { ok: false; reason: 'invalid' | 'already_redeemed' | 'wrong_wallet'; message: string; expectedWallet?: string };
+
+export type RedeemOnlineResult =
+  | { ok: true; check: ParsedCheck }
+  | { ok: false; reason: 'invalid' | 'already_redeemed' | 'wrong_wallet' | 'unreachable'; message: string };
 
 const WALLET_KEY = 'bs_wallet_v1';
 const REDEEMED_KEY = 'bs_redeemed_checks_v1';
@@ -218,15 +224,16 @@ export function buildReceiveShortCode(wallet: WalletProfile, requestedAmount?: n
 
 export function createOfflineTransferCheck(params: {
   amount: number;
-  targetWalletId?: string; // 6-char walletId or undefined for universal 'ALL'
+  targetWalletId: string; // Required 6-char recipient walletId
   senderName?: string;
   comment?: string;
 }): { code: string; link: string; targetWallet: string; amount: number; comment?: string } {
   const cleanAmount = Math.max(1, Math.min(MAX_TRANSFER_AMOUNT, Math.floor(params.amount)));
-  const target =
-    params.targetWalletId && /^[A-Z0-9]{6}$/i.test(params.targetWalletId)
-      ? params.targetWalletId.toUpperCase()
-      : 'ALL';
+  const rawTarget = (params.targetWalletId || '').trim().toUpperCase().replace(/^BS-/, '');
+  if (!/^[A-Z0-9]{6}$/.test(rawTarget)) {
+    throw new Error('Нужна ссылка на получение или ID кошелька получателя (BS-XXXXXX).');
+  }
+  const target = rawTarget;
 
   const cleanComment =
     typeof params.comment === 'string' && params.comment.trim()
@@ -337,7 +344,15 @@ export function validateIncomingCheck(
     };
   }
 
-  if (parsed.targetWallet !== 'ALL' && parsed.targetWallet !== myWalletId.toUpperCase()) {
+  if (parsed.targetWallet === 'ALL') {
+    return {
+      ok: false,
+      reason: 'wrong_wallet',
+      message: 'Общие чеки отключены. Забрать перевод может только владелец ссылки получателя.',
+    };
+  }
+
+  if (parsed.targetWallet !== myWalletId.toUpperCase()) {
     return {
       ok: false,
       reason: 'wrong_wallet',
@@ -353,6 +368,97 @@ export function validateIncomingCheck(
   };
 }
 
+export async function checkTransferStatusOnline(
+  rawInput: string
+): Promise<{ checked: boolean; redeemed: boolean }> {
+  const parsed = parseCheckFromInput(rawInput);
+  if (!parsed) return { checked: false, redeemed: false };
+  const out = await apiJsonFetch(
+    `/api/transfers/status?code=${encodeURIComponent(parsed.code)}`
+  );
+  if (out.kind === 'json' && out.ok && out.body && typeof out.body === 'object') {
+    const redeemed = Boolean((out.body as { redeemed?: unknown }).redeemed);
+    if (redeemed) {
+      markCheckRedeemed(parsed);
+    }
+    return { checked: true, redeemed };
+  }
+  return { checked: false, redeemed: false };
+}
+
+export async function redeemTransferCheckOnline(
+  rawInput: string,
+  myWalletId: string
+): Promise<RedeemOnlineResult> {
+  const validation = validateIncomingCheck(rawInput, myWalletId);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      reason: validation.reason,
+      message: validation.message,
+    };
+  }
+
+  const token = getStoredToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token && !token.startsWith('local_tok_')) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const out = await apiJsonFetch('/api/transfers/redeem', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      code: validation.check.code,
+      walletId: myWalletId.toUpperCase(),
+    }),
+  });
+
+  if (out.kind === 'unreachable') {
+    return {
+      ok: false,
+      reason: 'unreachable',
+      message: 'Нет связи с сервером — нужен интернет, чтобы проверить одноразовый чек.',
+    };
+  }
+
+  const body = (out.body && typeof out.body === 'object' ? out.body : {}) as {
+    alreadyRedeemed?: boolean;
+    wrongWallet?: boolean;
+    error?: string;
+  };
+
+  if (!out.ok) {
+    if (out.status === 409 || body.alreadyRedeemed) {
+      markCheckRedeemed(validation.check);
+      return {
+        ok: false,
+        reason: 'already_redeemed',
+        message:
+          body.error || 'Этот перевод уже забрали! Одна ссылка работает только 1 раз.',
+      };
+    }
+    if (out.status === 403 || body.wrongWallet) {
+      return {
+        ok: false,
+        reason: 'wrong_wallet',
+        message: body.error || 'Этот перевод закрыт для другого кошелька.',
+      };
+    }
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: body.error || 'Не удалось активировать перевод.',
+    };
+  }
+
+  markCheckRedeemed(validation.check);
+  return {
+    ok: true,
+    check: validation.check,
+  };
+}
+
 /**
  * Parses a friend's receive link, Telegram bot link, PAY-code, or BS-wallet ID.
  * Returns structured info so the Send screen can prefill recipient & requested amount.
@@ -362,7 +468,7 @@ export function parseRecipientInput(rawInput: string): ParsedRecipient {
   if (!trimmed) {
     return {
       kind: 'universal',
-      label: 'Любой игрок (по ссылке или коду)',
+      label: 'Вставь ссылку получателя (?pay=BS-...) или его ID BS-XXXXXX',
     };
   }
 

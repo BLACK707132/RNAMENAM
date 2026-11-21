@@ -5,10 +5,22 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+declare global {
+  interface Window {
+    __BS_DEFERRED_PWA_PROMPT__?: BeforeInstallPromptEvent | null;
+  }
+}
+
 export function usePWAInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(() => {
+    if (typeof window !== 'undefined' && window.__BS_DEFERRED_PWA_PROMPT__) {
+      return window.__BS_DEFERRED_PWA_PROMPT__;
+    }
+    return null;
+  });
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
 
   useEffect(() => {
     const standalone =
@@ -16,19 +28,28 @@ export function usePWAInstall() {
       (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     setIsInstalled(standalone);
 
+    const ua = navigator.userAgent || '';
     const ios =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+      /iPad|iPhone|iPod/.test(ua) &&
       !(window as Window & { MSStream?: unknown }).MSStream;
     setIsIOS(ios);
+    setIsAndroid(/Android/i.test(ua));
+
+    if (window.__BS_DEFERRED_PWA_PROMPT__) {
+      setDeferredPrompt(window.__BS_DEFERRED_PWA_PROMPT__);
+    }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      const promptEvent = e as BeforeInstallPromptEvent;
+      window.__BS_DEFERRED_PWA_PROMPT__ = promptEvent;
+      setDeferredPrompt(promptEvent);
     };
 
     const handleAppInstalled = () => {
       setIsInstalled(true);
       setDeferredPrompt(null);
+      window.__BS_DEFERRED_PWA_PROMPT__ = null;
     };
 
     const mediaQuery = window.matchMedia('(display-mode: standalone)');
@@ -36,6 +57,7 @@ export function usePWAInstall() {
       if (e.matches) {
         setIsInstalled(true);
         setDeferredPrompt(null);
+        window.__BS_DEFERRED_PWA_PROMPT__ = null;
       }
     };
 
@@ -51,13 +73,15 @@ export function usePWAInstall() {
   }, []);
 
   const promptInstall = async (): Promise<boolean> => {
-    if (!deferredPrompt) return false;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
+    const activePrompt = deferredPrompt || window.__BS_DEFERRED_PWA_PROMPT__;
+    if (!activePrompt) return false;
+    await activePrompt.prompt();
+    const { outcome } = await activePrompt.userChoice;
     if (outcome === 'accepted') {
       setIsInstalled(true);
     }
     setDeferredPrompt(null);
+    window.__BS_DEFERRED_PWA_PROMPT__ = null;
     return outcome === 'accepted';
   };
 
@@ -65,6 +89,7 @@ export function usePWAInstall() {
     isInstallable: Boolean(deferredPrompt),
     isInstalled,
     isIOS,
+    isAndroid,
     promptInstall,
   };
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Gift, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
 import {
   loadPromoHistory,
-  redeemPromoCode,
+  redeemPromoCodeAsync,
   type PromoHistoryItem,
 } from '../utils/promos';
 import { sound } from '../utils/sound';
@@ -15,6 +15,7 @@ interface PromoModalProps {
 
 export function PromoModal({ coins, onClaimCoins, onClose }: PromoModalProps) {
   const [code, setCode] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [reward, setReward] = useState<{ code: string; coins: number; label: string } | null>(
     null
@@ -29,12 +30,15 @@ export function PromoModal({ coins, onClaimCoins, onClose }: PromoModalProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError('');
     setReward(null);
+    setSubmitting(true);
 
-    const res = redeemPromoCode(code);
+    const res = await redeemPromoCodeAsync(code);
+    setSubmitting(false);
     if (!res.ok) {
       setError(res.message);
       return;
@@ -49,7 +53,7 @@ export function PromoModal({ coins, onClaimCoins, onClose }: PromoModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-40 flex items-start justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
         paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -126,11 +130,11 @@ export function PromoModal({ coins, onClaimCoins, onClose }: PromoModalProps) {
 
           <button
             type="submit"
-            disabled={!code.trim()}
+            disabled={!code.trim() || submitting}
             className="w-full h-12 rounded-xl bg-[#ff6a1a] hover:bg-[#ff7b33] disabled:opacity-40 disabled:hover:bg-[#ff6a1a] text-white font-display font-bold text-base flex items-center justify-center gap-2 shadow-lg transition"
           >
             <Gift className="w-4 h-4" />
-            Активировать
+            {submitting ? 'Проверяем...' : 'Активировать'}
           </button>
         </form>
 

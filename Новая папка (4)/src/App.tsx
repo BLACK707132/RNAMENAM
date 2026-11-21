@@ -4,6 +4,8 @@ import {
   VolumeX,
   ShoppingBag,
   Play,
+  Pause,
+  Home,
   RotateCcw,
   ArrowLeft,
   Shield,
@@ -18,12 +20,16 @@ import {
   Users,
   Send,
   Coins,
+  HelpCircle,
+  ArrowLeftRight,
+  Sun,
+  Moon,
+  UserX,
 } from 'lucide-react';
 import { GameCanvas, type GameMode } from './components/GameCanvas';
 import { HelmetIcon } from './components/HelmetIcon';
 import { HelmetMenu } from './components/HelmetMenu';
 import { OutfitModal } from './components/OutfitModal';
-import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { SettingsModal } from './components/SettingsModal';
 import { TransferModal, type TransferTab } from './components/TransferModal';
@@ -33,14 +39,19 @@ import { LeaderboardModal } from './components/LeaderboardModal';
 import { CaseModal, SCOOTER_CASE_PRICE } from './components/CaseModal';
 import { ClansModal } from './components/ClansModal';
 import { DonateModal } from './components/DonateModal';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { ControlTutorialOverlay } from './components/ControlTutorialOverlay';
 import {
   fetchMe,
   getStoredUser,
+  pingPresenceHeartbeat,
+  runGlobalClientWipeOnce,
   syncProfile,
   type AuthUser,
+  type KickNotice,
   type SyncSavePayload,
 } from './utils/accountApi';
-import { consumeIncomingUrlAction } from './utils/transfers';
+import { consumeIncomingUrlAction, loadWalletProfile } from './utils/transfers';
 import { getScooter, SCOOTERS, type ScooterId } from './data/scooters';
 import {
   getHelmet,
@@ -50,7 +61,18 @@ import {
   type HelmetId,
   type MotocrossHelmet,
 } from './data/helmets';
-import { getOutfit, OUTFITS, type OutfitId } from './data/outfits';
+import { getOutfit, OUTFITS, type OutfitId, type RiderGearSet } from './data/outfits';
+import {
+  loadMapId,
+  loadTimeOfDay,
+  loadWeatherId,
+  saveMapId,
+  saveTimeOfDay,
+  saveWeatherId,
+  type MapId,
+  type TimeOfDay,
+  type WeatherId,
+} from './data/maps';
 import { sound } from './utils/sound';
 
 interface SaveState {
@@ -72,6 +94,7 @@ const VALID_OUTFITS: OutfitId[] = OUTFITS.map((o) => o.id);
 const FREE_OUTFITS: OutfitId[] = OUTFITS.filter((o) => o.price === 0).map((o) => o.id);
 
 function loadState(): SaveState {
+  runGlobalClientWipeOnce();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -99,10 +122,13 @@ function loadState(): SaveState {
         parsed.curO && VALID_OUTFITS.includes(parsed.curO) ? parsed.curO : 'black_stant';
 
       return {
-        coins: typeof parsed.coins === 'number' && Number.isFinite(parsed.coins) ? parsed.coins : 0,
+        coins:
+          typeof parsed.coins === 'number' && Number.isFinite(parsed.coins)
+            ? Math.max(0, Math.floor(parsed.coins))
+            : 0,
         bestRun:
           typeof parsed.bestRun === 'number' && Number.isFinite(parsed.bestRun)
-            ? parsed.bestRun
+            ? Math.max(0, Math.floor(parsed.bestRun))
             : 0,
         own,
         cur,
@@ -163,10 +189,13 @@ function normalizeServerSave(raw: SyncSavePayload): SaveState {
     : 'black_stant';
 
   return {
-    coins: typeof raw.coins === 'number' && Number.isFinite(raw.coins) ? Math.max(0, raw.coins) : 0,
+    coins:
+      typeof raw.coins === 'number' && Number.isFinite(raw.coins)
+        ? Math.max(0, Math.floor(raw.coins))
+        : 0,
     bestRun:
       typeof raw.bestRun === 'number' && Number.isFinite(raw.bestRun)
-        ? Math.max(0, raw.bestRun)
+        ? Math.max(0, Math.floor(raw.bestRun))
         : 0,
     own,
     cur,
@@ -198,10 +227,19 @@ function registerAndGetTotalPlayers(): number {
 }
 
 const MUTE_STORAGE_KEY = 'bs_muted';
+const TUTORIAL_SEEN_KEY = 'bs_tutorial_seen_v1';
 
 function loadMuted(): boolean {
   try {
     return localStorage.getItem(MUTE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function hasSeenTutorial(): boolean {
+  try {
+    return localStorage.getItem(TUTORIAL_SEEN_KEY) === '1';
   } catch {
     return false;
   }
@@ -221,11 +259,18 @@ export default function App() {
   const [casesOpen, setCasesOpen] = useState(false);
   const [clansOpen, setClansOpen] = useState(false);
   const [donateOpen, setDonateOpen] = useState(false);
+  const [onlinePlayersCount, setOnlinePlayersCount] = useState(1);
+  const [kickNotice, setKickNotice] = useState<KickNotice | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [mapId, setMapId] = useState<MapId>(() => loadMapId());
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(() => loadTimeOfDay());
+  const [weather, setWeather] = useState<WeatherId>(() => loadWeatherId());
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => getStoredUser());
   const [myRank, setMyRank] = useState<number | null>(null);
   const [adminPayLink, setAdminPayLink] = useState('');
   const [transferOpen, setTransferOpen] = useState(false);
-  const [transferInitTab, setTransferInitTab] = useState<TransferTab>('receive');
+  const [transferInitTab, setTransferInitTab] = useState<TransferTab>('send');
   const [transferPrefill, setTransferPrefill] = useState('');
   const [crashOverlay, setCrashOverlay] = useState(false);
   const [lostCoins, setLostCoins] = useState(0);
@@ -235,17 +280,21 @@ export default function App() {
     sound.setMuted(initial);
     return initial;
   });
-  const [gasPressed, setGasPressed] = useState(false);
-  const [brakePressed, setBrakePressed] = useState(false);
   const [oneHandPressed, setOneHandPressed] = useState(false);
+  const [noHandsPressed, setNoHandsPressed] = useState(false);
   const [kneePressed, setKneePressed] = useState(false);
   const [stemFootPressed, setStemFootPressed] = useState(false);
 
   const gasRef = useRef(false);
   const brakeRef = useRef(false);
   const oneHandRef = useRef(false);
+  const noHandsRef = useRef(false);
   const kneeRef = useRef(false);
   const stemFootRef = useRef(false);
+
+  // Direct DOM refs for GAS/BRAKE visual state so rapid double-taps trigger 0 React re-renders!
+  const gasBtnRef = useRef<HTMLButtonElement | null>(null);
+  const brakeBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Track active pointer IDs per control for rock-solid mobile multi-touch
   const gasPointers = useRef<Set<number>>(new Set());
@@ -264,6 +313,7 @@ export default function App() {
 
   const currentScooter = getScooter(save.cur);
   const currentHelmet = getHelmet(save.curH);
+  const currentOutfit = getOutfit(save.curO);
 
   useEffect(() => {
     saveState(save);
@@ -307,6 +357,9 @@ export default function App() {
         }
       } else if (res.unauthorized) {
         setAuthUser(null);
+        if (res.kicked) {
+          setKickNotice(res.kicked);
+        }
       }
     });
     return () => {
@@ -314,19 +367,58 @@ export default function App() {
     };
   }, []);
 
+  // Unified live player & admin presence heartbeat (every 18s + tab return)
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      const clientId = loadWalletProfile().walletId;
+      const res = await pingPresenceHeartbeat(clientId, currentScooter.name);
+      if (active && res) {
+        setOnlinePlayersCount(Math.max(1, res.onlinePlayersCount));
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        tick();
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 18_000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [authUser, currentScooter.name, settingsOpen]);
+
+  const lastSyncedSigRef = useRef('');
+
   // Debounced background sync of balance & garage to Wealth Leaderboard
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser) {
+      lastSyncedSigRef.current = '';
+      return;
+    }
+    const sig = `${authUser.id}|${JSON.stringify(save)}`;
+    if (sig === lastSyncedSigRef.current) return;
     const timer = window.setTimeout(() => {
-      syncProfile(saveRef.current).then((res) => {
+      const currentSnap = saveRef.current;
+      const snapSig = `${authUser.id}|${JSON.stringify(currentSnap)}`;
+      syncProfile(currentSnap).then((res) => {
         if (res.unauthorized) {
           setAuthUser(null);
           setMyRank(null);
+          if (res.kicked) {
+            setKickNotice(res.kicked);
+          }
           return;
         }
         if (res.ok) {
           if (res.saveOverride) {
-            setSave(normalizeServerSave(res.saveOverride));
+            const normalized = normalizeServerSave(res.saveOverride);
+            lastSyncedSigRef.current = `${authUser.id}|${JSON.stringify(normalized)}`;
+            setSave(normalized);
             return;
           }
           const needVip = typeof res.vip === 'boolean' && res.vip !== saveRef.current.vip;
@@ -334,11 +426,17 @@ export default function App() {
             typeof res.coinsOverride === 'number' &&
             res.coinsOverride !== Math.floor(saveRef.current.coins);
           if (needVip || needCoins) {
-            setSave((prev) => ({
-              ...prev,
-              ...(needVip ? { vip: res.vip! } : {}),
-              ...(needCoins ? { coins: res.coinsOverride! } : {}),
-            }));
+            setSave((prev) => {
+              const updated: SaveState = {
+                ...prev,
+                ...(needVip ? { vip: res.vip! } : {}),
+                ...(needCoins ? { coins: Math.max(0, Math.floor(res.coinsOverride!)) } : {}),
+              };
+              lastSyncedSigRef.current = `${authUser.id}|${JSON.stringify(updated)}`;
+              return updated;
+            });
+          } else {
+            lastSyncedSigRef.current = snapSig;
           }
         }
       });
@@ -363,18 +461,39 @@ export default function App() {
 
   const setGas = useCallback((active: boolean) => {
     gasRef.current = active;
-    setGasPressed(active);
+    if (gasBtnRef.current) {
+      gasBtnRef.current.dataset.pressed = active ? '1' : '0';
+    }
   }, []);
 
   const setBrake = useCallback((active: boolean) => {
     brakeRef.current = active;
-    setBrakePressed(active);
+    if (brakeBtnRef.current) {
+      brakeBtnRef.current.dataset.pressed = active ? '1' : '0';
+    }
   }, []);
 
   const setOneHand = useCallback((active: boolean) => {
     oneHandRef.current = active;
     setOneHandPressed(active);
+    if (active && noHandsRef.current) {
+      noHandsRef.current = false;
+      setNoHandsPressed(false);
+    }
   }, []);
+
+  const setNoHands = useCallback((active: boolean) => {
+    noHandsRef.current = active;
+    setNoHandsPressed(active);
+    if (active && oneHandRef.current) {
+      oneHandRef.current = false;
+      setOneHandPressed(false);
+    }
+  }, []);
+
+  const handleAutoReleaseNoHands = useCallback(() => {
+    setNoHands(false);
+  }, [setNoHands]);
 
   const setKnee = useCallback((active: boolean) => {
     kneeRef.current = active;
@@ -401,31 +520,36 @@ export default function App() {
     setGas(false);
     setBrake(false);
     setOneHand(false);
+    setNoHands(false);
     setKnee(false);
     setStemFoot(false);
-  }, [setGas, setBrake, setOneHand, setKnee, setStemFoot]);
+  }, [setGas, setBrake, setOneHand, setNoHands, setKnee, setStemFoot]);
 
   const bindTouchControl = useCallback(
     (
       pointersRef: React.MutableRefObject<Set<number>>,
-      setter: (active: boolean) => void,
-      vibeMs = 10
+      setter: (active: boolean) => void
     ) => ({
       onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
         e.preventDefault();
+        e.stopPropagation();
+        sound.unlock();
+        if (pointersRef.current.size > 3) {
+          pointersRef.current.clear();
+        }
         try {
-          e.currentTarget.setPointerCapture(e.pointerId);
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
         } catch {
           // Ignore capture errors on synthetic events
         }
-        const wasEmpty = pointersRef.current.size === 0;
         pointersRef.current.add(e.pointerId);
-        if (wasEmpty) {
-          setter(true);
-          buzz(vibeMs);
-        }
+        setter(true);
       },
       onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
         pointersRef.current.delete(e.pointerId);
         if (pointersRef.current.size === 0) setter(false);
       },
@@ -437,13 +561,35 @@ export default function App() {
         pointersRef.current.delete(e.pointerId);
         if (pointersRef.current.size === 0) setter(false);
       },
+      onDoubleClick: (e: React.MouseEvent) => e.preventDefault(),
+      onDragStart: (e: React.DragEvent) => e.preventDefault(),
       onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
     }),
-    [buzz]
+    []
   );
 
-  const startGame = useCallback(() => {
-    clearAllControls();
+  // Global pointer-release safety net so GAS/BRAKE never stay stuck on rapid double-tap or mobile OS gesture interruptions
+  useEffect(() => {
+    const releasePointerId = (e: PointerEvent) => {
+      if (gasPointers.current.delete(e.pointerId) && gasPointers.current.size === 0) {
+        setGas(false);
+      }
+      if (brakePointers.current.delete(e.pointerId) && brakePointers.current.size === 0) {
+        setBrake(false);
+      }
+      if (oneHandPointers.current.delete(e.pointerId) && oneHandPointers.current.size === 0) {
+        setOneHand(false);
+      }
+    };
+    window.addEventListener('pointerup', releasePointerId, { passive: true });
+    window.addEventListener('pointercancel', releasePointerId, { passive: true });
+    return () => {
+      window.removeEventListener('pointerup', releasePointerId);
+      window.removeEventListener('pointercancel', releasePointerId);
+    };
+  }, [setGas, setBrake, setOneHand]);
+
+  const closeAllOverlays = useCallback(() => {
     setSettingsOpen(false);
     setPromoOpen(false);
     setAuthOpen(false);
@@ -452,20 +598,66 @@ export default function App() {
     setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
+    setTutorialOpen(false);
+    setPaused(false);
     setCrashOverlay(false);
+  }, []);
+
+  const pauseGame = useCallback(() => {
+    clearAllControls();
+    setPaused(true);
+  }, [clearAllControls]);
+
+  const resumeGame = useCallback(() => {
+    sound.unlock();
+    clearAllControls();
+    setPaused(false);
+  }, [clearAllControls]);
+
+  const openSettings = useCallback(() => {
+    clearAllControls();
+    closeAllOverlays();
+    setSettingsOpen(true);
+  }, [clearAllControls, closeAllOverlays]);
+
+  const openPromo = useCallback(() => {
+    clearAllControls();
+    closeAllOverlays();
+    setPromoOpen(true);
+  }, [clearAllControls, closeAllOverlays]);
+
+  const closeTutorial = useCallback(() => {
+    try {
+      localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
+    } catch {
+      // Ignore storage write errors
+    }
+    setTutorialOpen(false);
+  }, []);
+
+  const openTutorial = useCallback(() => {
+    clearAllControls();
+    setTutorialOpen(true);
+  }, [clearAllControls]);
+
+  const startGame = useCallback(() => {
+    sound.unlock();
+    clearAllControls();
+    closeAllOverlays();
     setLostCoins(0);
     setRunTrigger((n) => n + 1);
     setMode('play');
-  }, [clearAllControls]);
+    if (!hasSeenTutorial()) {
+      setTutorialOpen(true);
+    }
+  }, [clearAllControls, closeAllOverlays]);
 
   const openMenu = useCallback(() => {
     clearAllControls();
-    setCasesOpen(false);
-    setClansOpen(false);
-    setDonateOpen(false);
-    setCrashOverlay(false);
+    closeAllOverlays();
+    setAdminPayLink('');
     setMode('menu');
-  }, [clearAllControls]);
+  }, [clearAllControls, closeAllOverlays]);
 
   const openShop = useCallback(() => {
     clearAllControls();
@@ -507,7 +699,7 @@ export default function App() {
     setDonateOpen(true);
   }, [clearAllControls]);
 
-  const openClans = useCallback(async () => {
+  const openClans = useCallback(() => {
     clearAllControls();
     setSettingsOpen(false);
     setPromoOpen(false);
@@ -517,10 +709,10 @@ export default function App() {
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
-    if (authUser) {
-      await syncProfile(saveRef.current);
-    }
     setClansOpen(true);
+    if (authUser) {
+      void syncProfile(saveRef.current);
+    }
   }, [clearAllControls, authUser]);
 
   const openHelmets = useCallback(() => {
@@ -581,7 +773,7 @@ export default function App() {
     [clearAllControls]
   );
 
-  const openLeaderboard = useCallback(async () => {
+  const openLeaderboard = useCallback(() => {
     clearAllControls();
     setSettingsOpen(false);
     setPromoOpen(false);
@@ -590,10 +782,10 @@ export default function App() {
     setCasesOpen(false);
     setClansOpen(false);
     setDonateOpen(false);
-    if (authUser) {
-      await syncProfile(saveRef.current);
-    }
     setLeaderboardOpen(true);
+    if (authUser) {
+      void syncProfile(saveRef.current);
+    }
   }, [clearAllControls, authUser]);
 
   const handleAuthSuccess = useCallback(
@@ -697,10 +889,6 @@ export default function App() {
         cur: id,
       };
     });
-  }, []);
-
-  const handleSetVip = useCallback((enabled: boolean) => {
-    setSave((prev) => ({ ...prev, vip: enabled }));
   }, []);
 
   const handleAdminSelectScooter = useCallback((id: ScooterId) => {
@@ -808,6 +996,36 @@ export default function App() {
     });
   }, []);
 
+  const handleEquipSet = useCallback((set: RiderGearSet) => {
+    setSave((prev) => {
+      if (!prev.outfits.includes(set.outfitId) || !prev.helmets.includes(set.helmetId)) {
+        return prev;
+      }
+      sound.playTick();
+      return { ...prev, curO: set.outfitId, curH: set.helmetId };
+    });
+  }, []);
+
+  const handleBuySet = useCallback((set: RiderGearSet, price: number) => {
+    setSave((prev) => {
+      const hasO = prev.outfits.includes(set.outfitId);
+      const hasH = prev.helmets.includes(set.helmetId);
+      if (hasO && hasH) {
+        return { ...prev, curO: set.outfitId, curH: set.helmetId };
+      }
+      if (prev.coins < price) return prev;
+      sound.playWin(true);
+      return {
+        ...prev,
+        coins: prev.coins - price,
+        outfits: hasO ? prev.outfits : [...prev.outfits, set.outfitId],
+        helmets: hasH ? prev.helmets : [...prev.helmets, set.helmetId],
+        curO: set.outfitId,
+        curH: set.helmetId,
+      };
+    });
+  }, []);
+
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const next = !prev;
@@ -821,6 +1039,24 @@ export default function App() {
     });
   }, []);
 
+  const handleSelectMap = useCallback((nextMap: MapId) => {
+    setMapId(nextMap);
+    saveMapId(nextMap);
+  }, []);
+
+  const handleSelectWeather = useCallback((nextWeather: WeatherId) => {
+    setWeather(nextWeather);
+    saveWeatherId(nextWeather);
+  }, []);
+
+  const toggleTimeOfDay = useCallback(() => {
+    setTimeOfDay((prev) => {
+      const next: TimeOfDay = prev === 'day' ? 'night' : 'day';
+      saveTimeOfDay(next);
+      return next;
+    });
+  }, []);
+
   // Keyboard bindings: W/↑ = gas, S/↓/Shift = brake, Space = One-Hander (Ванхенд)
   useEffect(() => {
     const gasKeys = new Set(['ArrowUp', 'KeyW']);
@@ -829,6 +1065,13 @@ export default function App() {
     const heldBrake = new Set<string>();
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (tutorialOpen) {
+        if (!e.repeat && (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space')) {
+          e.preventDefault();
+          closeTutorial();
+        }
+        return;
+      }
       if (
         settingsOpen ||
         transferOpen ||
@@ -841,6 +1084,16 @@ export default function App() {
       )
         return;
       if (mode === 'play') {
+        if (paused) {
+          if (
+            !e.repeat &&
+            (e.code === 'Escape' || e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter')
+          ) {
+            e.preventDefault();
+            resumeGame();
+          }
+          return;
+        }
         if (gasKeys.has(e.code)) {
           e.preventDefault();
           heldGas.add(e.code);
@@ -855,18 +1108,34 @@ export default function App() {
         } else if (e.code === 'KeyC' && !e.repeat) {
           e.preventDefault();
           setOneHand(!oneHandRef.current);
+        } else if ((e.code === 'KeyV' || e.code === 'KeyB') && !e.repeat) {
+          e.preventDefault();
+          setNoHands(!noHandsRef.current);
         } else if ((e.code === 'KeyX' || e.code === 'KeyK') && !e.repeat) {
           e.preventDefault();
           setKnee(!kneeRef.current);
         } else if ((e.code === 'KeyZ' || e.code === 'KeyR') && !e.repeat) {
           e.preventDefault();
           setStemFoot(!stemFootRef.current);
+        } else if ((e.code === 'Escape' || e.code === 'KeyP') && !e.repeat) {
+          e.preventDefault();
+          pauseGame();
+        }
+      } else if (crashOverlay && !e.repeat) {
+        if (e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault();
+          startGame();
         } else if (e.code === 'Escape') {
+          e.preventDefault();
           openMenu();
         }
-      } else if (crashOverlay && !e.repeat && (e.code === 'Space' || e.code === 'Enter')) {
+      } else if (
+        (mode === 'shop' || mode === 'helmets' || mode === 'outfits') &&
+        !e.repeat &&
+        e.code === 'Escape'
+      ) {
         e.preventDefault();
-        startGame();
+        openMenu();
       }
     };
 
@@ -891,7 +1160,12 @@ export default function App() {
     };
 
     const onVisibilityChange = () => {
-      if (document.hidden) releaseAll();
+      if (document.hidden) {
+        releaseAll();
+        if (mode === 'play' && !tutorialOpen) {
+          setPaused(true);
+        }
+      }
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -906,6 +1180,7 @@ export default function App() {
     };
   }, [
     mode,
+    paused,
     settingsOpen,
     transferOpen,
     promoOpen,
@@ -914,10 +1189,15 @@ export default function App() {
     casesOpen,
     clansOpen,
     donateOpen,
+    tutorialOpen,
     crashOverlay,
+    closeTutorial,
+    pauseGame,
+    resumeGame,
     setGas,
     setBrake,
     setOneHand,
+    setNoHands,
     setKnee,
     setStemFoot,
     clearAllControls,
@@ -939,27 +1219,51 @@ export default function App() {
         scooterId={save.cur}
         helmetId={save.curH}
         outfitId={save.curO}
+        mapId={mapId}
+        timeOfDay={timeOfDay}
+        weather={weather}
         coins={save.coins}
         bestRun={save.bestRun}
         vip={save.vip}
         gasRef={gasRef}
         brakeRef={brakeRef}
         oneHandRef={oneHandRef}
+        noHandsRef={noHandsRef}
         kneeRef={kneeRef}
         stemFootRef={stemFootRef}
         runTrigger={runTrigger}
+        paused={paused || tutorialOpen}
         onBankCoins={handleBankCoins}
         onNewBest={handleNewBest}
         onCrashStart={handleCrashStart}
         onCrashFinish={handleCrashFinish}
+        onAutoReleaseNoHands={handleAutoReleaseNoHands}
       />
 
       {/* Top-right compact utility bar during gameplay (never collides with coins/angle bar) */}
-      {mode === 'play' && (
+      {mode === 'play' && !paused && (
         <div
           className="fixed right-3 z-20 flex items-center gap-1.5"
           style={{ top: 'max(10px, env(safe-area-inset-top, 10px))' }}
         >
+          <button
+            type="button"
+            onClick={toggleTimeOfDay}
+            aria-label={timeOfDay === 'night' ? 'Переключить на день' : 'Переключить на ночь'}
+            title={timeOfDay === 'night' ? 'День' : 'Ночь'}
+            className="h-10 w-10 flex items-center justify-center rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-[#ffd34d] border border-white/12 backdrop-blur-sm transition"
+          >
+            {timeOfDay === 'night' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4 text-sky-300" />}
+          </button>
+          <button
+            type="button"
+            onClick={openTutorial}
+            aria-label="Подсказка по управлению"
+            title="Управление"
+            className="h-10 w-10 flex items-center justify-center rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-[#ffc599] border border-white/12 backdrop-blur-sm transition"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
           <button
             type="button"
             onClick={toggleMute}
@@ -970,65 +1274,173 @@ export default function App() {
           </button>
           <button
             type="button"
-            onClick={openMenu}
-            className="h-10 px-3.5 rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-white font-semibold text-sm border border-white/12 backdrop-blur-sm transition whitespace-nowrap"
+            onClick={pauseGame}
+            aria-label="Пауза"
+            title="Пауза (P / Esc)"
+            className="h-10 px-3 sm:px-3.5 rounded-xl bg-black/55 hover:bg-black/70 active:scale-95 text-white font-bold text-sm flex items-center gap-1.5 border border-white/15 backdrop-blur-sm transition whitespace-nowrap"
           >
-            Меню
+            <Pause className="w-4 h-4 fill-current text-[#ff8b4a]" />
+            <span className="hidden sm:inline">Пауза</span>
           </button>
         </div>
       )}
 
+      {/* Pause Menu Overlay */}
+      {mode === 'play' && paused && !tutorialOpen && (
+        <div
+          className="fixed inset-0 z-30 flex items-start justify-center p-4 bg-[#0a0d12]/74 backdrop-blur-[3px] overflow-y-auto mobile-scroll"
+          style={{
+            paddingTop: 'max(16px, env(safe-area-inset-top, 16px))',
+            paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))',
+          }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-[#161c24]/96 border border-white/12 p-5 sm:p-6 text-center shadow-2xl my-auto">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#ff6a1a]/15 border border-[#ff6a1a]/35 text-[#ff8b4a] text-[11px] font-extrabold uppercase tracking-wider mb-2">
+              <Pause className="w-3.5 h-3.5 fill-current" />
+              Игра на паузе
+            </div>
+            <h2 className="font-display text-3xl font-black text-white leading-tight">
+              ПАУЗА
+            </h2>
+            <p className="text-xs text-white/65 font-mono-num mt-1 mb-5">
+              {currentScooter.name} · 🪙 {Math.floor(save.coins).toLocaleString('ru-RU')}
+            </p>
+
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={resumeGame}
+                className="w-full h-12 rounded-xl bg-[#ff6a1a] hover:bg-[#ff7b33] active:scale-[0.99] text-white font-display font-bold text-lg flex items-center justify-center gap-2 shadow-lg transition"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                Продолжить
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={toggleTimeOfDay}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                >
+                  {timeOfDay === 'night' ? (
+                    <>
+                      <Moon className="w-4 h-4 text-indigo-300" />
+                      Ночь
+                    </>
+                  ) : (
+                    <>
+                      <Sun className="w-4 h-4 text-amber-300" />
+                      День
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                >
+                  {muted ? (
+                    <>
+                      <VolumeX className="w-4 h-4 text-red-300" />
+                      Звук выкл
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-4 h-4 text-emerald-300" />
+                      Звук вкл
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={startGame}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                >
+                  <RotateCcw className="w-4 h-4 text-[#ff8b4a]" />
+                  Заново
+                </button>
+                <button
+                  type="button"
+                  onClick={openTutorial}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                >
+                  <HelpCircle className="w-4 h-4 text-[#ffc599]" />
+                  Управление
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={openMenu}
+                className="w-full h-11 rounded-xl bg-white/6 hover:bg-white/12 text-white/90 font-bold text-sm flex items-center justify-center gap-2 border border-white/10 transition"
+              >
+                <Home className="w-4 h-4" />
+                В главное меню
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Barely-visible square-ish half-screen Gas & Brake touch zones + subtle Trick Toggles */}
-      {mode === 'play' && (
+      {mode === 'play' && !paused && !tutorialOpen && (
         <>
-          {/* Subtle Trick Buttons above right Gas zone: Stem-Foot (Рулевая) + One-Knee (Колено) + One-Hander (1 Рука) */}
+          {/* Subtle Trick Buttons above right Gas zone: Stem-Foot + One-Knee + One-Hander + No-Hander */}
           <div
-            className="fixed z-20 flex items-center gap-1.5 sm:gap-2"
+            className="fixed z-20 flex items-center gap-1 sm:gap-1.5"
             style={{
               right: 'max(10px, env(safe-area-inset-right, 10px))',
               bottom: 'calc(max(10px, env(safe-area-inset-bottom, 10px)) + clamp(120px, 36dvh, 215px) + 8px)',
             }}
           >
-            {/* Foot-on-Steering-Column Stunt Toggle Button (Нога на рулевой / гусак) */}
+            {/* Foot-on-Steering-Column Stunt Toggle Button (Нога на рулевой / обе ноги на электроскутерах) */}
             <button
               type="button"
               aria-pressed={stemFootPressed}
-              aria-label="Нога на рулевой"
+              aria-label={currentScooter.seated ? 'Две ноги на рулевой' : 'Нога на рулевой'}
               onPointerDown={(e) => {
                 e.preventDefault();
                 setStemFoot(!stemFootRef.current);
                 buzz(14);
               }}
               onContextMenu={(e) => e.preventDefault()}
-              className={`w-[56px] h-[56px] sm:w-[64px] sm:h-[64px] [@media(max-height:500px)]:w-[50px] [@media(max-height:500px)]:h-[50px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
+              className={`w-[50px] h-[52px] sm:w-[60px] sm:h-[60px] [@media(max-height:500px)]:w-[46px] [@media(max-height:500px)]:h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
                 stemFootPressed
                   ? 'bg-emerald-500/45 border-emerald-300/80 text-white scale-95'
                   : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.14] text-white/45'
               }`}
             >
-              {/* Rider with front foot planted on the steering column (below handlebar/display) */}
               <svg
                 viewBox="0 0 48 48"
-                className="w-7 h-7 sm:w-8 sm:h-8 [@media(max-height:500px)]:w-6 [@media(max-height:500px)]:h-6"
+                className="w-6 h-6 sm:w-7 sm:h-7 [@media(max-height:500px)]:w-5 [@media(max-height:500px)]:h-5"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2.6"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                {/* Rear & front lifted wheels */}
                 <circle cx="14" cy="37" r="4.5" />
                 <circle cx="38" cy="25" r="4.2" />
-                {/* Deck & steering column */}
-                <path d="M18.5 34.8 L32.5 28 L28.5 13" />
-                {/* Back standing leg + front leg raised onto middle of steering column */}
-                <path d="M19 33 L18.5 23 L25 21 L30.5 21.5" />
-                {/* Torso & arms gripping handlebar */}
-                <path d="M18.5 23 L17.5 14.5 L28 13.5" />
-                {/* Helmet */}
-                <circle cx="19" cy="9.5" r="2.8" fill="currentColor" stroke="none" />
+                <path d="M18.5 34.8 L32.5 28 L28.5 12.5" />
+                {currentScooter.seated ? (
+                  <>
+                    {/* Both legs lifted onto handlebars (e-scooters & pitbikes) */}
+                    <path d="M17.5 24 L24.5 18.5 L30.2 19.2" />
+                    <path d="M17.5 24 L23.5 23 L29.8 23.8" />
+                  </>
+                ) : (
+                  <>
+                    {/* Classic standing scooter: back foot on deck, front foot on steering column */}
+                    <path d="M18.5 33.5 L18.5 24 L24.5 20 L30 21.5" />
+                  </>
+                )}
+                <path d="M18.5 24 L17 14.5 L28 13.5" />
+                <circle cx="18.2" cy="9.2" r="2.8" fill="currentColor" stroke="none" />
               </svg>
-              <span className="text-[8px] sm:text-[9px] font-display font-extrabold tracking-wide leading-none uppercase">
+              <span className="text-[7.5px] sm:text-[8.5px] font-display font-extrabold tracking-wide leading-none uppercase">
                 РУЛЕВАЯ
               </span>
             </button>
@@ -1044,7 +1456,7 @@ export default function App() {
                 buzz(14);
               }}
               onContextMenu={(e) => e.preventDefault()}
-              className={`w-[56px] h-[56px] sm:w-[64px] sm:h-[64px] [@media(max-height:500px)]:w-[50px] [@media(max-height:500px)]:h-[50px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
+              className={`w-[50px] h-[52px] sm:w-[60px] sm:h-[60px] [@media(max-height:500px)]:w-[46px] [@media(max-height:500px)]:h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
                 kneePressed
                   ? 'bg-sky-500/45 border-sky-300/75 text-white scale-95'
                   : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.14] text-white/45'
@@ -1053,26 +1465,21 @@ export default function App() {
               {/* Rider kneeling on one knee icon */}
               <svg
                 viewBox="0 0 48 48"
-                className="w-7 h-7 sm:w-8 sm:h-8 [@media(max-height:500px)]:w-6 [@media(max-height:500px)]:h-6"
+                className="w-6 h-6 sm:w-7 sm:h-7 [@media(max-height:500px)]:w-5 [@media(max-height:500px)]:h-5"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2.6"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                {/* Rear & front lifted wheels */}
                 <circle cx="14" cy="37" r="4.5" />
                 <circle cx="38" cy="25" r="4.2" />
-                {/* Deck & stem */}
                 <path d="M18.5 34.8 L32.5 28 L29.5 14" />
-                {/* Back foot on tail + front knee resting on deck */}
                 <path d="M19 33 L21.5 26 L26 29.5 L20.5 31" />
-                {/* Torso & arms gripping bar */}
                 <path d="M21.5 26 L21 16.5 L29 14.5" />
-                {/* Helmet */}
                 <circle cx="22.5" cy="11.5" r="2.8" fill="currentColor" stroke="none" />
               </svg>
-              <span className="text-[8px] sm:text-[9px] font-display font-extrabold tracking-wide leading-none uppercase">
+              <span className="text-[7.5px] sm:text-[8.5px] font-display font-extrabold tracking-wide leading-none uppercase">
                 КОЛЕНО
               </span>
             </button>
@@ -1088,7 +1495,7 @@ export default function App() {
                 buzz(14);
               }}
               onContextMenu={(e) => e.preventDefault()}
-              className={`w-[56px] h-[56px] sm:w-[64px] sm:h-[64px] [@media(max-height:500px)]:w-[50px] [@media(max-height:500px)]:h-[50px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
+              className={`w-[50px] h-[52px] sm:w-[60px] sm:h-[60px] [@media(max-height:500px)]:w-[46px] [@media(max-height:500px)]:h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
                 oneHandPressed
                   ? 'bg-[#ff6a1a]/50 border-[#ffc99e]/80 text-white scale-95'
                   : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.14] text-white/45'
@@ -1097,7 +1504,7 @@ export default function App() {
               {/* Wheelie Life One-Hander Rider Icon */}
               <svg
                 viewBox="0 0 48 48"
-                className="w-7 h-7 sm:w-8 sm:h-8 [@media(max-height:500px)]:w-6 [@media(max-height:500px)]:h-6"
+                className="w-6 h-6 sm:w-7 sm:h-7 [@media(max-height:500px)]:w-5 [@media(max-height:500px)]:h-5"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2.6"
@@ -1112,29 +1519,68 @@ export default function App() {
                 <path d="M18.5 16.5 L28 15" />
                 <path d="M17.5 16 L10.5 12 L8 5.5" />
               </svg>
-              <span className="text-[8px] sm:text-[9px] font-display font-extrabold tracking-wide leading-none uppercase">
+              <span className="text-[7.5px] sm:text-[8.5px] font-display font-extrabold tracking-wide leading-none uppercase">
                 1 РУКА
+              </span>
+            </button>
+
+            {/* No-Hander Toggle Button (Без рук — instant drop stunt!) */}
+            <button
+              type="button"
+              aria-pressed={noHandsPressed}
+              aria-label="Без рук"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                setNoHands(!noHandsRef.current);
+                buzz(18);
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+              className={`w-[50px] h-[52px] sm:w-[60px] sm:h-[60px] [@media(max-height:500px)]:w-[46px] [@media(max-height:500px)]:h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 border transition select-none touch-none ${
+                noHandsPressed
+                  ? 'bg-pink-500/50 border-pink-300/85 text-white scale-95'
+                  : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.14] text-white/45'
+              }`}
+            >
+              {/* No-Hander Rider Icon (both arms spread wide off handlebars!) */}
+              <svg
+                viewBox="0 0 48 48"
+                className="w-6 h-6 sm:w-7 sm:h-7 [@media(max-height:500px)]:w-5 [@media(max-height:500px)]:h-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="15" cy="37" r="4.5" />
+                <circle cx="38" cy="25" r="4.2" />
+                <path d="M19.5 34.8 L32.5 28.2 L29.5 15.5" />
+                <path d="M22.5 32 L21.5 23 L19 15.5" />
+                <circle cx="19.5" cy="10.2" r="2.8" fill="currentColor" stroke="none" />
+                {/* Both arms raised wide off the bars */}
+                <path d="M19 16 L11.5 12 L8 5.5" />
+                <path d="M19.5 16 L26 11 L30 5" />
+              </svg>
+              <span className="text-[7.5px] sm:text-[8.5px] font-display font-extrabold tracking-wide leading-none uppercase">
+                БЕЗ РУК
               </span>
             </button>
           </div>
 
           {/* Bottom-Left: Barely-visible square half-screen Brake Touch Zone */}
           <button
+            ref={brakeBtnRef}
+            data-pressed="0"
             type="button"
             aria-label="Тормоз"
-            {...bindTouchControl(brakePointers, setBrake, 10)}
+            {...bindTouchControl(brakePointers, setBrake)}
             style={{
               left: 'max(10px, env(safe-area-inset-left, 10px))',
               bottom: 'max(10px, env(safe-area-inset-bottom, 10px))',
               height: 'clamp(120px, 36dvh, 215px)',
             }}
-            className={`fixed z-20 w-[45vw] max-w-[260px] rounded-xl flex flex-col items-start justify-end p-3.5 sm:p-4 border transition select-none touch-none ${
-              brakePressed
-                ? 'bg-red-500/[0.15] border-red-300/45 text-red-100/85'
-                : 'bg-white/[0.025] border-white/[0.10] text-white/30'
-            }`}
+            className="fixed z-20 w-[45vw] max-w-[260px] rounded-xl flex flex-col items-start justify-end p-3.5 sm:p-4 border transition-colors duration-75 select-none touch-none bg-white/[0.025] border-white/[0.10] text-white/30 data-[pressed=1]:bg-red-500/[0.15] data-[pressed=1]:border-red-300/45 data-[pressed=1]:text-red-100/85"
           >
-            <div className="flex flex-col items-center gap-1 opacity-85">
+            <div className="flex flex-col items-center gap-1 opacity-85 pointer-events-none">
               <svg
                 viewBox="0 0 44 54"
                 className="w-7 h-9 sm:w-8 sm:h-10"
@@ -1159,21 +1605,19 @@ export default function App() {
 
           {/* Bottom-Right: Barely-visible square half-screen Gas Touch Zone */}
           <button
+            ref={gasBtnRef}
+            data-pressed="0"
             type="button"
             aria-label="Газ"
-            {...bindTouchControl(gasPointers, setGas, 10)}
+            {...bindTouchControl(gasPointers, setGas)}
             style={{
               right: 'max(10px, env(safe-area-inset-right, 10px))',
               bottom: 'max(10px, env(safe-area-inset-bottom, 10px))',
               height: 'clamp(120px, 36dvh, 215px)',
             }}
-            className={`fixed z-20 w-[45vw] max-w-[260px] rounded-xl flex flex-col items-end justify-end p-3.5 sm:p-4 border transition select-none touch-none ${
-              gasPressed
-                ? 'bg-white/[0.13] border-white/45 text-white/90'
-                : 'bg-white/[0.025] border-white/[0.10] text-white/30'
-            }`}
+            className="fixed z-20 w-[45vw] max-w-[260px] rounded-xl flex flex-col items-end justify-end p-3.5 sm:p-4 border transition-colors duration-75 select-none touch-none bg-white/[0.025] border-white/[0.10] text-white/30 data-[pressed=1]:bg-white/[0.13] data-[pressed=1]:border-white/45 data-[pressed=1]:text-white/90"
           >
-            <div className="flex flex-col items-center gap-1 opacity-85">
+            <div className="flex flex-col items-center gap-1 opacity-85 pointer-events-none">
               <svg
                 viewBox="0 0 44 58"
                 className="w-7 h-9 sm:w-8 sm:h-10"
@@ -1199,7 +1643,7 @@ export default function App() {
       {/* Main Menu Overlay */}
       {mode === 'menu' && (
         <div
-          className="fixed inset-0 z-30 flex items-center justify-center p-3.5 sm:p-4 bg-[#0a0d12]/72 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+          className="fixed inset-0 z-30 flex items-start justify-center p-3.5 sm:p-4 bg-[#0a0d12]/72 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
           style={{
             paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
             paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -1207,7 +1651,7 @@ export default function App() {
         >
           <div className="w-full max-w-md rounded-2xl bg-[#161c24]/95 border border-white/10 p-5 sm:p-6 text-center shadow-2xl my-auto">
             <div className="flex items-center justify-between gap-2 mb-3">
-              <div className="flex items-center gap-1.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                 <div className="text-sm font-semibold text-white/85 font-mono-num truncate">
                   🪙 {Math.floor(save.coins).toLocaleString('ru-RU')}
                 </div>
@@ -1216,11 +1660,18 @@ export default function App() {
                     VIP ×2
                   </span>
                 )}
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-[10px] font-bold font-mono-num shrink-0"
+                  title="Игроки в игре прямо сейчас"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Онлайн: {onlinePlayersCount}
+                </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setPromoOpen(true)}
+                  onClick={openPromo}
                   aria-label="Промокод"
                   className="h-9 px-2.5 flex items-center justify-center gap-1.5 rounded-lg bg-[#ff6a1a]/18 hover:bg-[#ff6a1a]/28 border border-[#ff6a1a]/35 text-[#ffc599] text-xs font-bold transition"
                 >
@@ -1229,7 +1680,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSettingsOpen(true)}
+                  onClick={openSettings}
                   aria-label="Настройки"
                   className="h-9 px-2.5 flex items-center justify-center gap-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/85 text-xs font-bold transition"
                 >
@@ -1271,7 +1722,13 @@ export default function App() {
                   alt={currentScooter.name}
                   referrerPolicy="no-referrer"
                   onError={(e) => {
-                    e.currentTarget.src = currentScooter.originalSrc;
+                    if (
+                      !e.currentTarget.dataset.fallback &&
+                      currentScooter.originalSrc !== currentScooter.spriteSrc
+                    ) {
+                      e.currentTarget.dataset.fallback = '1';
+                      e.currentTarget.src = currentScooter.originalSrc;
+                    }
                   }}
                   className="w-full h-full object-contain drop-shadow-sm"
                 />
@@ -1315,7 +1772,7 @@ export default function App() {
                 Старт
               </button>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={openShop}
@@ -1326,19 +1783,11 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={openOutfits}
-                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                  onClick={openSettings}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap px-2"
                 >
-                  <Shirt className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
-                  Одежда
-                </button>
-                <button
-                  type="button"
-                  onClick={openHelmets}
-                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
-                >
-                  <Shield className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
-                  Шлемы
+                  <Settings className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
+                  <span className="truncate">Вещи и погода</span>
                 </button>
               </div>
 
@@ -1382,7 +1831,15 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => openTransfers('send')}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap"
+                >
+                  <ArrowLeftRight className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
+                  Переводы
+                </button>
                 <button
                   type="button"
                   onClick={openDonate}
@@ -1391,30 +1848,32 @@ export default function App() {
                   <Coins className="w-4 h-4 shrink-0 text-emerald-300" />
                   Донат
                 </button>
-                <button
-                  type="button"
-                  onClick={openClans}
-                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap"
-                >
-                  <Users className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
-                  Кланы
-                </button>
-                <a
-                  href="https://t.me/durov0113"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="h-11 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-[0.99] text-sky-200 font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-sky-400/35 transition whitespace-nowrap"
-                >
-                  <Send className="w-4 h-4 shrink-0 text-sky-300" />
-                  TG
-                </a>
               </div>
 
+              <button
+                type="button"
+                onClick={openClans}
+                className="w-full h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap"
+              >
+                <Users className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
+                Кланы
+              </button>
+
               <PWAInstallButton />
+
+              <a
+                href="https://t.me/durov0113"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-10 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-[0.99] text-sky-200 font-bold text-xs flex items-center justify-center gap-1.5 border border-sky-400/30 transition whitespace-nowrap"
+              >
+                <Send className="w-3.5 h-3.5 shrink-0 text-sky-300" />
+                Поддержка Telegram (@durov0113)
+              </a>
             </div>
 
             <p className="hidden sm:block mt-3.5 text-xs text-white/45">
-              W / ↑ — газ · S / ↓ / Shift — тормоз · Пробел / C — ванхенд · X — колено · Z — рулевая
+              W/↑ газ · S/↓ тормоз · C — 1 рука · V — без рук · X — колено · Z — рулевая · P/Esc — пауза
             </p>
           </div>
         </div>
@@ -1423,27 +1882,27 @@ export default function App() {
       {/* Shop Overlay */}
       {mode === 'shop' && (
         <div
-          className="fixed inset-0 z-30 flex items-center justify-center p-3.5 sm:p-4 bg-[#0a0d12]/78 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+          className="fixed inset-0 z-30 flex items-start justify-center p-3.5 sm:p-4 bg-[#0a0d12]/78 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
           style={{
             paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
             paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
           }}
         >
           <div className="w-full max-w-2xl rounded-2xl bg-[#161c24]/95 border border-white/10 p-4 sm:p-6 shadow-2xl my-auto">
-            <div className="flex items-center justify-between gap-4 mb-4 sm:mb-5">
-              <div>
-                <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-white">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-4 mb-4 sm:mb-5">
+              <div className="min-w-0">
+                <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-white leading-tight">
                   Магазин самокатов
                 </h2>
                 <p className="text-sm text-white/65 font-mono-num mt-0.5">
                   Баланс: 🪙 {Math.floor(save.coins).toLocaleString('ru-RU')}
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap">
                 <button
                   type="button"
                   onClick={openDonate}
-                  className="h-10 px-3 rounded-xl bg-emerald-500/18 hover:bg-emerald-500/28 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-emerald-400/40 transition whitespace-nowrap"
+                  className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl bg-emerald-500/18 hover:bg-emerald-500/28 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-emerald-400/40 transition whitespace-nowrap"
                 >
                   <Coins className="w-4 h-4 text-emerald-300" />
                   Донат
@@ -1451,7 +1910,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={openCases}
-                  className="h-10 px-3 rounded-xl bg-[#ffd34d]/18 hover:bg-[#ffd34d]/28 text-[#ffd34d] font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-[#ffd34d]/40 transition whitespace-nowrap"
+                  className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl bg-[#ffd34d]/18 hover:bg-[#ffd34d]/28 text-[#ffd34d] font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-[#ffd34d]/40 transition whitespace-nowrap"
                 >
                   <Package className="w-4 h-4" />
                   Кейс
@@ -1459,7 +1918,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={openMenu}
-                  className="h-10 px-3.5 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-semibold text-sm flex items-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                  className="h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 border border-white/10 transition whitespace-nowrap"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   Назад
@@ -1468,7 +1927,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 max-h-[58dvh] overflow-y-auto pr-1 mobile-scroll">
-              {SCOOTERS.map((s) => {
+              {SCOOTERS.map((s, idx) => {
                 const owned = save.own.includes(s.id);
                 const selected = save.cur === s.id;
                 const canAfford = save.coins >= s.price;
@@ -1486,9 +1945,15 @@ export default function App() {
                       <img
                         src={s.spriteSrc}
                         alt={s.name}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority={idx < 6 ? 'high' : 'auto'}
                         referrerPolicy="no-referrer"
                         onError={(e) => {
-                          e.currentTarget.src = s.originalSrc;
+                          if (!e.currentTarget.dataset.fallback && s.originalSrc !== s.spriteSrc) {
+                            e.currentTarget.dataset.fallback = '1';
+                            e.currentTarget.src = s.originalSrc;
+                          }
                         }}
                         className="w-full h-full object-contain drop-shadow-sm"
                       />
@@ -1497,9 +1962,15 @@ export default function App() {
                     <div className="font-display font-bold text-base sm:text-lg text-white leading-tight">
                       {s.name}
                     </div>
-                    <div className="text-xs text-white/65 mt-1 mb-3 font-mono-num">
+                    <div className="text-xs text-white/65 mt-1 mb-2.5 font-mono-num">
                       до {s.maxKmh} км/ч · Газ ×{s.power} · ×{s.multiplier}
                     </div>
+
+                    {s.scrapeKind === 'fender' ? (
+                      <div className="mb-2.5 text-[10px] font-bold text-amber-300 bg-amber-500/12 border border-amber-400/25 rounded-md px-2 py-0.5">
+                        ⚡ Чирк крылом ×1.45
+                      </div>
+                    ) : null}
 
                     {selected ? (
                       <div className="mt-auto w-full h-10 rounded-lg bg-[#ff6a1a]/15 text-[#ff8b4a] font-bold text-sm flex items-center justify-center">
@@ -1517,10 +1988,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={openCases}
-                        className="mt-auto w-full h-10 rounded-lg bg-[#ffd34d]/20 hover:bg-[#ffd34d]/30 border border-[#ffd34d]/50 text-[#ffd34d] font-bold text-xs sm:text-sm flex items-center justify-center gap-1 transition"
+                        className="mt-auto w-full h-10 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/55 text-rose-200 font-bold text-xs sm:text-sm flex items-center justify-center gap-1 transition"
                       >
-                        <Package className="w-3.5 h-3.5 shrink-0" />
-                        В кейсе (3%)
+                        <Package className="w-3.5 h-3.5 shrink-0 text-rose-300" />
+                        Только в кейсе (3%)
                       </button>
                     ) : (
                       <button
@@ -1565,25 +2036,35 @@ export default function App() {
         />
       )}
 
-      {/* Streetwear & Stunt Outfits Wardrobe */}
+      {/* Streetwear & Stunt Outfits + Complete Sets Wardrobe */}
       {mode === 'outfits' && (
         <OutfitModal
           coins={save.coins}
           ownedOutfits={save.outfits}
+          ownedHelmets={save.helmets}
           equippedOutfit={save.curO}
+          equippedHelmet={save.curH}
           scooterAccent={currentScooter.accent}
           helmet={currentHelmet}
           onBack={openMenu}
           onStartPlay={startGame}
           onPickOutfit={handlePickOutfit}
           onBuyOutfit={handleBuyOutfit}
+          onEquipSet={handleEquipSet}
+          onBuySet={handleBuySet}
         />
       )}
 
       {/* Crash / Game Over Overlay */}
       {mode === 'crash' && crashOverlay && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center p-4 bg-[#0a0d12]/74 backdrop-blur-[2px]">
-          <div className="w-full max-w-sm rounded-2xl bg-[#161c24]/95 border border-white/10 p-6 text-center shadow-2xl">
+        <div
+          className="fixed inset-0 z-30 flex items-start justify-center p-4 bg-[#0a0d12]/74 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+          style={{
+            paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
+            paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
+          }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-[#161c24]/95 border border-white/10 p-6 text-center shadow-2xl my-auto">
             <h2 className="font-display text-3xl font-black text-white mb-2">Упал!</h2>
             <p className="text-sm text-[#ff7b72] font-semibold mb-1 font-mono-num">
               Трюк не засчитан: −{lostCoins.toLocaleString('ru-RU')} монет
@@ -1627,6 +2108,14 @@ export default function App() {
                   Шлемы
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={openMenu}
+                className="w-full h-10 rounded-xl bg-white/6 hover:bg-white/12 text-white/85 font-bold text-sm flex items-center justify-center gap-2 border border-white/10 transition"
+              >
+                <Home className="w-4 h-4" />
+                В главное меню
+              </button>
             </div>
           </div>
         </div>
@@ -1636,9 +2125,20 @@ export default function App() {
         <SettingsModal
           muted={muted}
           onToggleMute={toggleMute}
+          mapId={mapId}
+          onSelectMap={handleSelectMap}
+          timeOfDay={timeOfDay}
+          onToggleTimeOfDay={toggleTimeOfDay}
+          weather={weather}
+          onSelectWeather={handleSelectWeather}
+          currentScooterName={currentScooter.name}
+          currentOutfitName={currentOutfit.name}
+          currentHelmetName={currentHelmet.name}
+          onOpenShop={openShop}
+          onOpenOutfits={openOutfits}
+          onOpenHelmets={openHelmets}
           totalPlayers={totalPlayers}
           coins={save.coins}
-          vip={save.vip}
           authUser={authUser}
           currentScooterId={save.cur}
           ownedScooters={save.own}
@@ -1650,7 +2150,6 @@ export default function App() {
           onRemoveCoins={handleRemoveCoins}
           onResetCoins={handleResetCoins}
           onSetCoins={handleSetCoins}
-          onSetVip={handleSetVip}
           onAdminSelectScooter={handleAdminSelectScooter}
           onAdminUnlockAllScooters={handleAdminUnlockAllScooters}
           onFullResetSelf={handleFullResetSelf}
@@ -1661,6 +2160,38 @@ export default function App() {
             setAdminPayLink('');
           }}
         />
+      )}
+      {/* Kicked by Admin Notice Modal */}
+      {kickNotice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0a0d12]/85 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-[#161c24] border border-red-400/45 p-6 text-center shadow-2xl">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-400/40 flex items-center justify-center mx-auto mb-3">
+              <UserX className="w-6 h-6 text-[#ff7b72]" />
+            </div>
+            <h3 className="font-display text-xl font-black text-white mb-1.5">
+              Тебя кикнул админ
+            </h3>
+            <p className="text-xs text-white/75 mb-1">
+              Администратор: <b className="text-white">{kickNotice.by}</b>
+            </p>
+            <p className="text-xs text-[#ff938b] font-semibold bg-red-500/12 border border-red-400/25 rounded-lg px-3 py-2 my-3">
+              Причина: {kickNotice.reason}
+            </p>
+            {kickNotice.until > Date.now() && (
+              <p className="text-xs text-white/60 mb-3 font-mono-num">
+                Доступ закрыт ещё ~
+                {Math.max(1, Math.ceil((kickNotice.until - Date.now()) / 60_000))} мин.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => setKickNotice(null)}
+              className="w-full h-10 rounded-xl bg-red-500 hover:bg-red-400 text-white font-bold text-sm transition"
+            >
+              Понятно
+            </button>
+          </div>
+        </div>
       )}
       {/* Scooter Case Opening Modal (300,000 coins) */}
       {casesOpen && (
@@ -1698,18 +2229,19 @@ export default function App() {
           onClose={() => setDonateOpen(false)}
         />
       )}
-      {/* Offline Coin Receive & Wallet Modal */}
+      {/* Coin Transfer & Wallet Modal */}
       {transferOpen && (
         <TransferModal
           coins={save.coins}
           initialTab={transferInitTab}
           initialPrefill={transferPrefill}
-          receiveOnly
           onDeductCoins={handleDeductTransferCoins}
           onCreditCoins={handleBankCoins}
           onClose={() => setTransferOpen(false)}
         />
       )}
+      {/* First-Launch Controls Tutorial Overlay */}
+      {mode === 'play' && tutorialOpen && <ControlTutorialOverlay onClose={closeTutorial} />}
       {/* Promo Codes Modal */}
       {promoOpen && (
         <PromoModal

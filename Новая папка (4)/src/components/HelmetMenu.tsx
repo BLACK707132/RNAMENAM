@@ -146,7 +146,7 @@ export function HelmetMenu({
 
   return (
     <div
-      className="fixed inset-0 z-30 flex items-center justify-center p-3 sm:p-4 bg-[#0a0d12]/80 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-30 flex items-start justify-center p-3 sm:p-4 bg-[#0a0d12]/80 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
         paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -157,7 +157,7 @@ export function HelmetMenu({
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-white">
-              Мотокроссовые шлемы
+              Шлемы (MX, Фулл-Фейс, GP)
             </h2>
             <p className="text-sm text-white/65 font-mono-num mt-0.5">
               Баланс: 🪙 {Math.floor(coins).toLocaleString('ru-RU')} · Открыто {ownedHelmets.length}/{HELMETS.length}
@@ -177,7 +177,7 @@ export function HelmetMenu({
         {/* Roulette Spinner Box */}
         <div className="rounded-xl bg-[#11161d] border border-white/10 p-3 sm:p-4 mb-5">
           <div className="flex items-center justify-between gap-2 mb-2.5">
-            <div className="text-sm font-bold text-white">Рулетка MX-шлемов</div>
+            <div className="text-sm font-bold text-white">Рулетка шлемов</div>
             <div className="text-xs text-white/55 font-mono-num">
               Дубликат → +{HELMET_DUPLICATE_REFUND.toLocaleString('ru-RU')} 🪙
             </div>
@@ -234,7 +234,7 @@ export function HelmetMenu({
                   <div className="text-xs text-white/70">
                     {result.isDuplicate
                       ? `Уже есть в коллекции · возврат +${HELMET_DUPLICATE_REFUND.toLocaleString('ru-RU')} монет`
-                      : `Новый мотокроссовый шлем (${result.helmet.rarityLabel})!`}
+                      : `Новый шлем (${result.helmet.rarityLabel})!`}
                   </div>
                 </div>
               </div>
@@ -263,9 +263,9 @@ export function HelmetMenu({
           </button>
         </div>
 
-        {/* Motocross Helmet Wardrobe */}
+        {/* Helmet Wardrobe */}
         <div className="text-xs font-semibold text-white/60 mb-2">
-          Твои мотокроссовые шлемы
+          Твои шлемы ({ownedHelmets.length}/{HELMETS.length})
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto pr-0.5 mobile-scroll">
           {HELMETS.map((h) => {

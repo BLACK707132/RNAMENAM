@@ -23,14 +23,13 @@ export default defineConfig(() => {
           name: 'BLACK STANT',
           short_name: 'BLACK STANT',
           description:
-            'Аркадная игра про вилли и трюки на электросамокатах Kugoo, Bootfor и мотокроссовых шлемах.',
-          start_url: '/',
-          scope: '/',
-          display: 'standalone',
-          orientation: 'any',
+            'Аркадная игра про вилли и трюки на электросамокатах и электропитбайках Kugoo, Wish и Sur-Ron.',
           theme_color: '#10151c',
           background_color: '#10151c',
-          lang: 'ru',
+          display: 'standalone',
+          orientation: 'any',
+          start_url: '/',
+          scope: '/',
           icons: [
             {
               src: '/pwa-192x192.png',
@@ -53,17 +52,60 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          globIgnores: ['**/assets/aistudio/**', '**/*.zip'],
-          navigateFallbackDenylist: [/^\/api\//],
+          skipWaiting: true,
+          clientsClaim: true,
+          cleanupOutdatedCaches: true,
+          globPatterns: ['**/*.{js,css,ico,svg,woff,woff2}'],
+          globIgnores: ['**/assets/scooters/**', '**/assets/aistudio/**', '**/engine2d/**'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          navigateFallback: null,
           runtimeCaching: [
             {
-              urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+              urlPattern: ({request}) => request.mode === 'navigate',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'html-nav-cache-v1',
+                networkTimeoutSeconds: 3,
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /\/assets\/scooters\/.*\.(?:webp|png|jpg|jpeg)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'scooter-sprites-cache-v2',
+                expiration: {
+                  maxEntries: 64,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /\/assets\/aistudio\/.*\.(?:webp|png|jpg|jpeg)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'scooter-fallback-cache-v1',
+                expiration: {
+                  maxEntries: 32,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'google-fonts-cache',
                 expiration: {
-                  maxEntries: 12,
+                  maxEntries: 10,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
@@ -72,21 +114,23 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /\/assets\/scooters\/.*\.png/i,
-              handler: 'StaleWhileRevalidate',
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
               options: {
-                cacheName: 'scooter-sprites-cache',
+                cacheName: 'gstatic-fonts-cache',
                 expiration: {
-                  maxEntries: 24,
-                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                  maxEntries: 10,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
                 },
               },
             },
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
       // Copies src/assets into dist/ so root-relative URLs like

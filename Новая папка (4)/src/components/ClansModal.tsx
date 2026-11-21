@@ -125,12 +125,15 @@ export function ClansModal({
   const [myClan, setMyClan] = useState<ClanDetail | null>(null);
   const [myInvites, setMyInvites] = useState<PendingClanInvite[]>([]);
   const [createCost, setCreateCost] = useState<number>(CLAN_CREATE_COST);
+  const [onlinePlayersCount, setOnlinePlayersCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [tab, setTab] = useState<MainTab>('list');
   const [subTab, setSubTab] = useState<MyClanSubTab>('chat');
+  const tabRef = useRef<MainTab>(tab);
+  tabRef.current = tab;
 
   // Create clan form
   const [name, setName] = useState('');
@@ -172,31 +175,37 @@ export function ClansModal({
 
   const load = useCallback(
     async (opts?: { autoSwitch?: boolean; silent?: boolean }) => {
-      if (!opts?.silent) setLoading(true);
+      if (!opts?.silent) {
+        setLoading(true);
+        setError('');
+      }
       const res = await fetchClans();
       if (!opts?.silent) setLoading(false);
       if (!res.ok) {
         if (!opts?.silent) setError(res.error);
         return;
       }
+      setError('');
       setClans(res.data.clans);
       setMyClan(res.data.myClan);
       setMyInvites(res.data.myInvites);
       setCreateCost(res.data.createCost || CLAN_CREATE_COST);
+      if (typeof res.data.onlinePlayersCount === 'number') {
+        setOnlinePlayersCount(res.data.onlinePlayersCount);
+      }
       if (opts?.autoSwitch && res.data.myClan) {
         setTab('my');
         syncSettingsFromClan(res.data.myClan);
-      } else if (!res.data.myClan && tab === 'my') {
+      } else if (!res.data.myClan && tabRef.current === 'my') {
         setTab('list');
       }
     },
-    [syncSettingsFromClan, tab]
+    [syncSettingsFromClan]
   );
 
   useEffect(() => {
     load({ autoSwitch: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   // Sync settings fields when switching to settings sub-tab
   useEffect(() => {
@@ -206,16 +215,15 @@ export function ClansModal({
     }
   }, [subTab, myClan, syncSettingsFromClan]);
 
-  // Live 3.5s polling while in My Clan chat or viewing modal
+  // Live 4s polling while modal is open (even before login so online counts & clans stay fresh)
   useEffect(() => {
-    if (!user) return;
     const interval = window.setInterval(() => {
       if (!busy) {
         load({ silent: true });
       }
-    }, 3500);
+    }, 4000);
     return () => window.clearInterval(interval);
-  }, [user, busy, load]);
+  }, [busy, load]);
 
   // Auto-scroll chat to bottom only when new messages arrive
   useEffect(() => {
@@ -578,7 +586,7 @@ export function ClansModal({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-40 flex items-start justify-center p-3 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
         paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -592,7 +600,15 @@ export function ClansModal({
               <Users className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-display text-xl font-black text-white leading-tight">Кланы</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-display text-xl font-black text-white leading-tight">Кланы</h2>
+                {onlinePlayersCount !== null && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/30 text-[10px] font-bold text-emerald-300 font-mono-num">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Онлайн: {onlinePlayersCount}
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-white/55 truncate">
                 {myClan
                   ? `Твой клан: [${myClan.tag}] ${myClan.name}`
@@ -751,8 +767,15 @@ export function ClansModal({
         </div>
 
         {error && (
-          <div className="mb-3 rounded-xl bg-red-500/15 border border-red-400/35 px-3 py-2 text-xs font-semibold text-[#ff938b]">
-            {error}
+          <div className="mb-3 rounded-xl bg-red-500/15 border border-red-400/35 px-3 py-2 text-xs font-semibold text-[#ff938b] flex items-center justify-between gap-2">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => load({ autoSwitch: true })}
+              className="h-7 px-2.5 rounded-lg bg-red-500/25 hover:bg-red-500/40 text-white font-bold text-[11px] shrink-0 transition"
+            >
+              Повторить
+            </button>
           </div>
         )}
         {notice && (
@@ -828,6 +851,12 @@ export function ClansModal({
                             {Math.floor(c.totalCoins).toLocaleString('ru-RU')}
                           </span>
                           <span>👥 {c.memberCount}/30</span>
+                          {typeof c.onlineCount === 'number' && c.onlineCount > 0 && (
+                            <span className="text-emerald-300 font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              {c.onlineCount} в сети
+                            </span>
+                          )}
                           <span className="truncate">👑 @{c.leaderUsername}</span>
                         </div>
                       </div>
@@ -935,11 +964,17 @@ export function ClansModal({
                             {myClan.description}
                           </p>
                         )}
-                        <div className="flex items-center gap-3 mt-1 text-[11px] font-mono-num text-white/65">
+                        <div className="flex items-center gap-3 mt-1 text-[11px] font-mono-num text-white/65 flex-wrap">
                           <span className="text-[#ffd34d] font-bold">
                             🪙 {Math.floor(myClan.totalCoins).toLocaleString('ru-RU')}
                           </span>
                           <span>👥 {myClan.memberCount}/30</span>
+                          {typeof myClan.onlineCount === 'number' && (
+                            <span className="text-emerald-300 font-bold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              {myClan.onlineCount} в сети
+                            </span>
+                          )}
                           <span>👑 @{myClan.leaderUsername}</span>
                         </div>
                       </div>
@@ -1218,6 +1253,14 @@ export function ClansModal({
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`w-2 h-2 rounded-full shrink-0 ${
+                                      m.online || (user && m.id === user.id)
+                                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
+                                        : 'bg-white/20'
+                                    }`}
+                                    title={m.online || (user && m.id === user.id) ? 'В сети' : 'Не в сети'}
+                                  />
                                   {m.isLeader && (
                                     <Crown className="w-3.5 h-3.5 text-[#ffd34d] shrink-0" />
                                   )}
@@ -1227,6 +1270,11 @@ export function ClansModal({
                                   {m.vip && (
                                     <span className="px-1 rounded bg-[#ffd34d]/20 text-[#ffd34d] text-[9px] font-black">
                                       VIP
+                                    </span>
+                                  )}
+                                  {(m.online || (user && m.id === user.id)) && (
+                                    <span className="text-[9px] font-bold text-emerald-300">
+                                      в сети
                                     </span>
                                   )}
                                   {mutedNow && (

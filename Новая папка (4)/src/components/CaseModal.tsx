@@ -17,8 +17,17 @@ export interface ScooterCaseDrop {
 
 export const SCOOTER_CASE_DROPS: ScooterCaseDrop[] = [
   {
+    scooterId: 'starkvarg',
+    chance: 3,
+    rarityLabel: 'ЭКСКЛЮЗИВ КЕЙСА',
+    rarityColor: '#fb7185',
+    borderColor: 'rgba(251, 113, 133, 0.85)',
+    bgTint: 'rgba(244, 63, 94, 0.18)',
+    legendary: true,
+  },
+  {
     scooterId: 'thunder3',
-    chance: 12,
+    chance: 8,
     rarityLabel: 'ЛЕГЕНДАРНЫЙ',
     rarityColor: '#22d3ee',
     borderColor: 'rgba(34, 211, 238, 0.72)',
@@ -26,33 +35,41 @@ export const SCOOTER_CASE_DROPS: ScooterCaseDrop[] = [
     legendary: true,
   },
   {
-    scooterId: 'g4max',
-    chance: 15,
+    scooterId: 'surron',
+    chance: 12,
     rarityLabel: 'МИФИЧЕСКИЙ',
     rarityColor: '#ffd34d',
-    borderColor: 'rgba(255, 211, 77, 0.65)',
+    borderColor: 'rgba(255, 211, 77, 0.68)',
     bgTint: 'rgba(255, 174, 25, 0.14)',
     legendary: true,
   },
   {
-    scooterId: 'g2ultra',
-    chance: 21,
+    scooterId: 'g4max',
+    chance: 15,
+    rarityLabel: 'ЭПИЧЕСКИЙ',
+    rarityColor: '#c084fc',
+    borderColor: 'rgba(192, 132, 252, 0.55)',
+    bgTint: 'rgba(168, 85, 247, 0.12)',
+  },
+  {
+    scooterId: 'wish02pro',
+    chance: 20,
     rarityLabel: 'РЕДКИЙ',
     rarityColor: '#fb923c',
-    borderColor: 'rgba(251, 146, 60, 0.5)',
+    borderColor: 'rgba(251, 146, 60, 0.52)',
     bgTint: 'rgba(249, 115, 22, 0.12)',
   },
   {
-    scooterId: 'gm',
-    chance: 24,
+    scooterId: 'g2ultra',
+    chance: 20,
     rarityLabel: 'НЕОБЫЧНЫЙ',
-    rarityColor: '#c084fc',
-    borderColor: 'rgba(192, 132, 252, 0.45)',
-    bgTint: 'rgba(168, 85, 247, 0.10)',
+    rarityColor: '#38bdf8',
+    borderColor: 'rgba(56, 189, 248, 0.45)',
+    bgTint: 'rgba(14, 165, 233, 0.10)',
   },
   {
     scooterId: 'c3',
-    chance: 28,
+    chance: 22,
     rarityLabel: 'ОБЫЧНЫЙ',
     rarityColor: '#94a3b8',
     borderColor: 'rgba(148, 163, 184, 0.35)',
@@ -222,7 +239,7 @@ export function CaseModal({
 
   return (
     <div
-      className="fixed inset-0 z-30 flex items-center justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
+      className="fixed inset-0 z-40 flex items-start justify-center p-3.5 sm:p-4 bg-[#0a0d12]/82 backdrop-blur-[2px] overflow-y-auto mobile-scroll"
       style={{
         paddingTop: 'max(14px, env(safe-area-inset-top, 14px))',
         paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
@@ -292,9 +309,14 @@ export function CaseModal({
                       <img
                         src={sc.spriteSrc}
                         alt={sc.name}
+                        loading="eager"
+                        decoding="async"
                         referrerPolicy="no-referrer"
                         onError={(e) => {
-                          e.currentTarget.src = sc.originalSrc;
+                          if (!e.currentTarget.dataset.fallback && sc.originalSrc !== sc.spriteSrc) {
+                            e.currentTarget.dataset.fallback = '1';
+                            e.currentTarget.src = sc.originalSrc;
+                          }
                         }}
                         className="w-full h-full object-contain"
                       />
@@ -328,9 +350,15 @@ export function CaseModal({
               <img
                 src={result.scooter.spriteSrc}
                 alt={result.scooter.name}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
                 referrerPolicy="no-referrer"
                 onError={(e) => {
-                  e.currentTarget.src = result.scooter.originalSrc;
+                  if (!e.currentTarget.dataset.fallback && result.scooter.originalSrc !== result.scooter.spriteSrc) {
+                    e.currentTarget.dataset.fallback = '1';
+                    e.currentTarget.src = result.scooter.originalSrc;
+                  }
                 }}
                 className="w-full h-full object-contain"
               />
@@ -398,7 +426,7 @@ export function CaseModal({
             </h3>
             <span className="text-[11px] text-white/45">Дубликаты в инвентарь не добавляются</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {SCOOTER_CASE_DROPS.map((drop) => {
               const sc = getScooter(drop.scooterId);
               const owned = ownedScooters.includes(drop.scooterId);
@@ -421,9 +449,14 @@ export function CaseModal({
                     <img
                       src={sc.spriteSrc}
                       alt={sc.name}
+                      loading="eager"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
-                        e.currentTarget.src = sc.originalSrc;
+                        if (!e.currentTarget.dataset.fallback && sc.originalSrc !== sc.spriteSrc) {
+                          e.currentTarget.dataset.fallback = '1';
+                          e.currentTarget.src = sc.originalSrc;
+                        }
                       }}
                       className="w-full h-full object-contain"
                     />
