@@ -1,0 +1,6 @@
+{
+  "name": "Пепельный Горизонт",
+  "description": "Атмосферная экшен-RPG о выживании и исследовании северного архипелага в эпоху вечного затмения.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
