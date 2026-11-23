@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { X, Trophy, Crown, RefreshCw, UserPlus, WifiOff } from 'lucide-react';
 import {
+  buildLocalLeaderboard,
   fetchLeaderboard,
   type AuthUser,
   type LeaderboardEntry,
@@ -11,6 +12,9 @@ import { getScooter, type ScooterId } from '../data/scooters';
 interface LeaderboardModalProps {
   user: AuthUser | null;
   localCoins: number;
+  bestRun: number;
+  curScooter: ScooterId;
+  vip: boolean;
   onOpenRegister: () => void;
   onRankLoaded?: (rank: number | null) => void;
   onClose: () => void;
@@ -23,11 +27,19 @@ function getScooterLabel(id: string): string {
 export function LeaderboardModal({
   user,
   localCoins,
+  bestRun,
+  curScooter,
+  vip,
   onOpenRegister,
   onRankLoaded,
   onClose,
 }: LeaderboardModalProps) {
-  const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [data, setData] = useState<LeaderboardResponse | null>(() =>
+    buildLocalLeaderboard(
+      user,
+      user ? { coins: localCoins, bestRun, curScooter, vip } : undefined
+    )
+  );
   const [loading, setLoading] = useState(true);
   const [fromCache, setFromCache] = useState(false);
   const [error, setError] = useState('');
@@ -38,7 +50,9 @@ export function LeaderboardModal({
         setLoading(true);
         setError('');
       }
-      const res = await fetchLeaderboard();
+      const res = await fetchLeaderboard(
+        user ? { coins: localCoins, bestRun, curScooter, vip } : undefined
+      );
       if (!opts?.silent) setLoading(false);
       if (!res.ok) {
         if (!opts?.silent) setError(res.error);
@@ -49,7 +63,7 @@ export function LeaderboardModal({
       setFromCache(Boolean(res.fromCache));
       onRankLoaded?.(res.data.myRank);
     },
-    [onRankLoaded]
+    [user, localCoins, bestRun, curScooter, vip, onRankLoaded]
   );
 
   useEffect(() => {
@@ -255,18 +269,6 @@ export function LeaderboardModal({
                           }`}
                           title={entry.online || entry.isMe ? 'В сети' : 'Не в сети'}
                         />
-                        {entry.clanTag && (
-                          <span
-                            className="text-[10px] font-extrabold px-1.5 py-0.5 rounded border shrink-0"
-                            style={{
-                              color: entry.clanColor || '#ff8b4a',
-                              borderColor: `${entry.clanColor || '#ff8b4a'}66`,
-                              backgroundColor: `${entry.clanColor || '#ff8b4a'}1a`,
-                            }}
-                          >
-                            [{entry.clanTag}]
-                          </span>
-                        )}
                         <span className="font-display font-bold text-sm sm:text-base text-white truncate">
                           @{entry.username}
                         </span>

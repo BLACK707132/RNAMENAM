@@ -8,11 +8,17 @@ export interface SyncSavePayload {
   bestRun: number;
   own: string[];
   cur: string;
+  vesc?: string[];
   helmets: string[];
   curH: string;
   outfits: string[];
   curO: string;
   vip?: boolean;
+  paints?: Partial<Record<string, { primary?: string; secondary?: string }>>;
+  lights?: string[];
+  curLight?: string;
+  motors?: string[];
+  flipped?: string[];
 }
 
 export interface LeaderboardEntry {
@@ -23,8 +29,6 @@ export interface LeaderboardEntry {
   bestRun: number;
   curScooter: string;
   vip?: boolean;
-  clanTag?: string;
-  clanColor?: string;
   online?: boolean;
   isMe: boolean;
 }
@@ -327,7 +331,17 @@ function extractBodyError(body: unknown, fallback: string): string {
   return fallback;
 }
 
-function buildLocalLeaderboard(me: AuthUser | null): LeaderboardResponse {
+export interface LiveLeaderboardSave {
+  coins: number;
+  bestRun: number;
+  curScooter: string;
+  vip?: boolean;
+}
+
+export function buildLocalLeaderboard(
+  me: AuthUser | null,
+  liveSave?: LiveLeaderboardSave
+): LeaderboardResponse {
   const cached = getCachedLeaderboard();
   const localAccounts = loadLocalAccounts();
   const merged = new Map<string, LeaderboardEntry>();
@@ -350,6 +364,22 @@ function buildLocalLeaderboard(me: AuthUser | null): LeaderboardResponse {
     });
   }
 
+  if (me && liveSave) {
+    const meLower = me.username.toLowerCase();
+    const existing = merged.get(meLower);
+    merged.set(meLower, {
+      rank: 0,
+      id: me.id,
+      username: me.username,
+      coins: Math.max(0, Math.floor(liveSave.coins || 0)),
+      bestRun: Math.max(0, Math.floor(liveSave.bestRun || 0)),
+      curScooter: liveSave.curScooter || existing?.curScooter || 'c3',
+      vip: typeof liveSave.vip === 'boolean' ? liveSave.vip : Boolean(existing?.vip),
+      online: true,
+      isMe: true,
+    });
+  }
+
   const sorted = Array.from(merged.values()).sort((a, b) => {
     if (b.coins !== a.coins) return b.coins - a.coins;
     return b.bestRun - a.bestRun;
@@ -369,12 +399,59 @@ function buildLocalLeaderboard(me: AuthUser | null): LeaderboardResponse {
     return item;
   });
 
+  if (me && !myEntry) {
+    const idx = sorted.findIndex(
+      (e) => e.id === me.id || e.username.toLowerCase() === meLower
+    );
+    if (idx >= 0) {
+      myRank = idx + 1;
+      myEntry = { ...sorted[idx], rank: myRank, isMe: true };
+    }
+  }
+
   return {
     entries,
     totalRegistered: sorted.length,
+    onlineCount: Math.max(1, me ? 1 : 0),
     myRank,
     myEntry,
   };
+}
+
+export async function checkUsernameExists(
+  username: string
+): Promise<{ exists: boolean; offline?: boolean }> {
+  const cleanUser = username.trim().replace(/^@+/, '');
+  if (!USERNAME_RE.test(cleanUser)) {
+    return { exists: false };
+  }
+  const lower = cleanUser.toLowerCase();
+  if (loadLocalAccounts().some((a) => a.usernameLower === lower)) {
+    return { exists: true };
+  }
+  const cached = getCachedLeaderboard();
+  if (cached && cached.entries.some((e) => e.username.toLowerCase() === lower)) {
+    return { exists: true };
+  }
+
+  const queryPath = `/api/auth/check-username?username=${encodeURIComponent(cleanUser)}`;
+  if (!isPackagedMobileOrigin()) {
+    const primary = await tryJsonRequest(queryPath, undefined, 3500);
+    if (primary.kind === 'json' && primary.ok) {
+      const b = primary.body as { exists?: boolean };
+      return { exists: Boolean(b?.exists) };
+    }
+  }
+  const sameOrigin =
+    typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  if (sameOrigin !== FALLBACK_API_ORIGIN) {
+    const fallback = await tryJsonRequest(`${FALLBACK_API_ORIGIN}${queryPath}`, undefined, 3500);
+    if (fallback.kind === 'json' && fallback.ok) {
+      const b = fallback.body as { exists?: boolean };
+      return { exists: Boolean(b?.exists) };
+    }
+  }
+  return { exists: false, offline: true };
 }
 
 export async function registerAccount(
@@ -428,8 +505,15 @@ export async function registerAccount(
   // Offline / packaged mobile fallback: register locally so @юз & leaderboard always work!
   const locals = loadLocalAccounts();
   const lower = cleanUser.toLowerCase();
-  if (locals.some((a) => a.usernameLower === lower)) {
-    return { ok: false, error: 'Этот юз уже занят на этом устройстве! Войди в аккаунт.' };
+  const cachedLb = getCachedLeaderboard();
+  const existsInCache = Boolean(
+    cachedLb && cachedLb.entries.some((e) => e.username.toLowerCase() === lower)
+  );
+  if (locals.some((a) => a.usernameLower === lower) || existsInCache) {
+    return {
+      ok: false,
+      error: 'Этот юз уже существует! Перейди в «Уже есть юз», чтобы войти.',
+    };
   }
   const now = Date.now();
   const id = `loc_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -532,6 +616,11 @@ export async function upgradeLocalAccountIfNeeded(): Promise<string | null> {
             password: acc.password,
           }),
         });
+        if (out.kind === 'json' && !out.ok && (out.status === 401 || out.status === 403)) {
+          saveLocalAccounts(loadLocalAccounts().filter((a) => a.id !== acc.id));
+          clearAuthSession();
+          return null;
+        }
       }
 
       if (out.kind === 'json' && out.ok) {
@@ -712,22 +801,81 @@ export async function syncProfile(save: SyncSavePayload): Promise<{
   };
 }
 
-export async function fetchLeaderboard(): Promise<
-  ApiResult<LeaderboardResponse> & { fromCache?: boolean }
-> {
-  const token = await resolveServerUserToken();
+export async function fetchLeaderboard(
+  liveSave?: LiveLeaderboardSave
+): Promise<ApiResult<LeaderboardResponse> & { fromCache?: boolean }> {
+  const rawToken = getStoredToken();
   const headers: Record<string, string> = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  if (rawToken && !rawToken.startsWith('local_tok_')) {
+    headers.Authorization = `Bearer ${rawToken}`;
   }
   const out = await apiJsonFetch('/api/leaderboard', { headers });
+  const me = getStoredUser();
   if (out.kind === 'json' && out.ok) {
-    const data = out.body as LeaderboardResponse;
+    const raw = (out.body && typeof out.body === 'object'
+      ? out.body
+      : {}) as Partial<LeaderboardResponse>;
+    let entries = Array.isArray(raw.entries) ? [...raw.entries] : [];
+    let myRank = typeof raw.myRank === 'number' ? raw.myRank : null;
+    let myEntry = raw.myEntry ?? null;
+    let totalRegistered =
+      typeof raw.totalRegistered === 'number' ? raw.totalRegistered : entries.length;
+
+    if (me && liveSave && !myEntry) {
+      const meLower = me.username.toLowerCase();
+      const filtered = entries.filter(
+        (e) => e.id !== me.id && e.username.toLowerCase() !== meLower
+      );
+      filtered.push({
+        rank: 0,
+        id: me.id,
+        username: me.username,
+        coins: Math.max(0, Math.floor(liveSave.coins || 0)),
+        bestRun: Math.max(0, Math.floor(liveSave.bestRun || 0)),
+        curScooter: liveSave.curScooter || 'c3',
+        vip: Boolean(liveSave.vip),
+        online: true,
+        isMe: true,
+      });
+      filtered.sort((a, b) => {
+        if (b.coins !== a.coins) return b.coins - a.coins;
+        return b.bestRun - a.bestRun;
+      });
+      entries = filtered.slice(0, 50).map((e, i) => {
+        const isMe = e.id === me.id || e.username.toLowerCase() === meLower;
+        const next: LeaderboardEntry = { ...e, rank: i + 1, isMe };
+        if (isMe) {
+          myRank = i + 1;
+          myEntry = next;
+        }
+        return next;
+      });
+      if (!myEntry) {
+        const idx = filtered.findIndex(
+          (e) => e.id === me.id || e.username.toLowerCase() === meLower
+        );
+        if (idx >= 0) {
+          myRank = idx + 1;
+          myEntry = { ...filtered[idx], rank: myRank, isMe: true };
+        }
+      }
+      totalRegistered = Math.max(totalRegistered, filtered.length);
+    }
+
+    const data: LeaderboardResponse = {
+      entries,
+      totalRegistered,
+      onlineCount: typeof raw.onlineCount === 'number' ? raw.onlineCount : undefined,
+      onlineRegisteredCount:
+        typeof raw.onlineRegisteredCount === 'number' ? raw.onlineRegisteredCount : undefined,
+      myRank,
+      myEntry,
+    };
     cacheLeaderboard(data);
     return { ok: true, data };
   }
   // Always show merged cached + local registered leaderboard when offline / standalone APK
-  const localLb = buildLocalLeaderboard(getStoredUser());
+  const localLb = buildLocalLeaderboard(me, liveSave);
   return { ok: true, data: localLb, fromCache: true };
 }
 
@@ -736,6 +884,7 @@ export interface PresenceStatusResponse {
   onlinePlayersCount: number;
   onlineUsersCount: number;
   onlineAdminsCount: number;
+  totalVisits?: number;
   staff: OnlineAdminInfo[];
 }
 
@@ -763,6 +912,7 @@ export async function pingPresenceHeartbeat(
         typeof data.onlinePlayersCount === 'number' ? data.onlinePlayersCount : 1,
       onlineUsersCount: typeof data.onlineUsersCount === 'number' ? data.onlineUsersCount : 0,
       onlineAdminsCount: typeof data.onlineAdminsCount === 'number' ? data.onlineAdminsCount : 0,
+      totalVisits: typeof data.totalVisits === 'number' ? data.totalVisits : undefined,
       staff: Array.isArray(data.staff) ? data.staff : [],
     };
   }
@@ -779,6 +929,7 @@ export async function fetchPresenceStatus(): Promise<PresenceStatusResponse | nu
         typeof data.onlinePlayersCount === 'number' ? data.onlinePlayersCount : 0,
       onlineUsersCount: typeof data.onlineUsersCount === 'number' ? data.onlineUsersCount : 0,
       onlineAdminsCount: typeof data.onlineAdminsCount === 'number' ? data.onlineAdminsCount : 0,
+      totalVisits: typeof data.totalVisits === 'number' ? data.totalVisits : undefined,
       staff: Array.isArray(data.staff) ? data.staff : [],
     };
   }
@@ -1410,10 +1561,49 @@ function isStoredBlackOwner(): boolean {
 }
 
 export async function setAdminUserVip(
-  _username: string,
-  _vip: boolean
+  username: string,
+  vip: boolean
 ): Promise<ApiResult<AdminUserSummary>> {
-  return { ok: false, error: 'Выдача VIP ×2 отключена.' };
+  const token = getStoredAdminToken();
+  if (!token) return { ok: false, error: 'Нет доступа администратора.' };
+  if (!isStoredBlackOwner()) {
+    return { ok: false, error: 'Только главный админ BLACK может выдавать VIP ×2.' };
+  }
+  if (!token.startsWith('local_unlocked_')) {
+    const out = await apiJsonFetch('/api/admin/vip', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-token': token,
+      },
+      body: JSON.stringify({ username, vip }),
+    });
+    if (out.kind === 'json') {
+      if (!out.ok) {
+        return { ok: false, error: extractBodyError(out.body, 'Не удалось обновить VIP ×2.') };
+      }
+      const data = out.body as { user: AdminUserSummary };
+      return { ok: true, data: data.user };
+    }
+  }
+  const clean = username.trim().replace(/^@+/, '').toLowerCase();
+  const locals = loadLocalAccounts();
+  const acc = locals.find((a) => a.usernameLower === clean);
+  if (!acc) return { ok: false, error: `Игрок @${username.replace(/^@+/, '')} не найден.` };
+  acc.save.vip = Boolean(vip);
+  acc.updatedAt = Date.now();
+  saveLocalAccounts(locals);
+  return {
+    ok: true,
+    data: {
+      id: acc.id,
+      username: acc.username,
+      coins: Math.floor(acc.save.coins || 0),
+      vip: Boolean(acc.save.vip),
+      curScooter: acc.save.cur,
+      updatedAt: acc.updatedAt,
+    },
+  };
 }
 
 export async function adjustAdminUserCoins(
@@ -1601,362 +1791,55 @@ export async function deleteAdminUser(
   return { ok: true, data: { deletedId: removed.id, deletedUsername: removed.username } };
 }
 
-// ── CLANS API ──
+export async function deleteMyAccount(): Promise<ApiResult<{ deleted: boolean }>> {
+  const token = getStoredToken();
+  const storedUser = getStoredUser();
 
-export const CLAN_CREATE_COST = 1_000_000;
-
-export interface ClanMember {
-  id: string;
-  username: string;
-  coins: number;
-  bestRun: number;
-  curScooter: string;
-  vip: boolean;
-  isLeader: boolean;
-  online?: boolean;
-  mutedUntil: number; // 0 = not muted, -1 = forever, >0 = timestamp ms
-}
-
-export interface ClanMessageReply {
-  id: string;
-  username: string;
-  text: string;
-}
-
-export interface ClanMessage {
-  id: string;
-  userId: string;
-  username: string;
-  text: string;
-  timestamp: number;
-  system?: boolean;
-  replyTo?: ClanMessageReply;
-}
-
-export interface ClanInvite {
-  userId: string;
-  username: string;
-  invitedBy: string;
-  createdAt: number;
-}
-
-export interface PendingClanInvite {
-  clanId: string;
-  clanName: string;
-  clanTag: string;
-  clanColor: string;
-  clanAvatar: string;
-  memberCount: number;
-  totalCoins: number;
-  invitedBy: string;
-  createdAt: number;
-}
-
-export interface ClanSummary {
-  id: string;
-  name: string;
-  tag: string;
-  description: string;
-  color: string;
-  avatar: string;
-  inviteOnly: boolean;
-  leaderId: string;
-  leaderUsername: string;
-  memberCount: number;
-  onlineCount?: number;
-  totalCoins: number;
-  isMember: boolean;
-  isLeader: boolean;
-  isInvited: boolean;
-  createdAt: number;
-}
-
-export interface ClanDetail extends ClanSummary {
-  members: ClanMember[];
-  invites: ClanInvite[];
-  myMutedUntil: number;
-  messages: ClanMessage[];
-}
-
-export interface ClansResponse {
-  clans: ClanSummary[];
-  myClan: ClanDetail | null;
-  myInvites: PendingClanInvite[];
-  onlinePlayersCount?: number;
-  createCost: number;
-}
-
-export async function fetchClans(): Promise<ApiResult<ClansResponse>> {
-  const token = await resolveServerUserToken();
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const out = await apiJsonFetch('/api/clans', { headers });
-  if (out.kind === 'unreachable') {
-    return { ok: false, error: 'Нет связи с сервером. Проверь интернет и нажми «Повторить».' };
-  }
-  if (!out.ok) {
-    return { ok: false, error: extractBodyError(out.body, 'Не удалось загрузить кланы.') };
-  }
-  const data = out.body as ClansResponse;
-  return {
-    ok: true,
-    data: {
-      clans: Array.isArray(data.clans) ? data.clans : [],
-      myClan: data.myClan ?? null,
-      myInvites: Array.isArray(data.myInvites) ? data.myInvites : [],
-      onlinePlayersCount:
-        typeof data.onlinePlayersCount === 'number' ? data.onlinePlayersCount : undefined,
-      createCost: typeof data.createCost === 'number' ? data.createCost : CLAN_CREATE_COST,
-    },
-  };
-}
-
-export async function createClan(params: {
-  name: string;
-  tag: string;
-  description: string;
-  color: string;
-  avatar: string;
-  inviteOnly: boolean;
-}): Promise<ApiResult<{ clan: ClanDetail; newCoins: number }>> {
-  if (!getStoredToken()) return { ok: false, error: 'Сначала войди или создай аккаунт (@юз).' };
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет связи с сервером для создания клана.' };
-  const out = await apiJsonFetch('/api/clans', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(params),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось создать клан.') };
-  return { ok: true, data: out.body as { clan: ClanDetail; newCoins: number } };
-}
-
-export async function joinClan(clanId: string): Promise<ApiResult<ClanDetail>> {
-  if (!getStoredToken()) return { ok: false, error: 'Сначала войди или создай аккаунт (@юз).' };
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет связи с сервером для входа в клан.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/join`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось вступить в клан.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function inviteToClan(
-  clanId: string,
-  username: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/invite`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ username }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось отправить приглашение.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function cancelClanInvite(
-  clanId: string,
-  userId: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/invite/cancel`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ userId }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось отменить приглашение.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function acceptClanInvite(clanId: string): Promise<ApiResult<ClanDetail>> {
-  if (!getStoredToken()) return { ok: false, error: 'Сначала войди в аккаунт.' };
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет связи с сервером.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/invite/accept`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось принять приглашение.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function declineClanInvite(clanId: string): Promise<ApiResult<true>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/invite/decline`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось отклонить приглашение.') };
-  return { ok: true, data: true };
-}
-
-export async function updateClanSettings(
-  clanId: string,
-  patch: {
-    name?: string;
-    description?: string;
-    color?: string;
-    avatar?: string;
-    inviteOnly?: boolean;
-  }
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/settings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(patch),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось сохранить настройки клана.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function transferClanOwnership(
-  clanId: string,
-  memberId: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/transfer`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ memberId }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось передать владение кланом.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function muteClanMember(
-  clanId: string,
-  memberId: string,
-  durationMinutes: number
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/mute`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ memberId, durationMinutes }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось выдать мут.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function leaveClan(): Promise<ApiResult<true>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch('/api/clans/leave', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось выйти из клана.') };
-  return { ok: true, data: true };
-}
-
-export async function kickClanMember(
-  clanId: string,
-  memberId: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/kick`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ memberId }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось выгнать участника.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function sendClanMessage(
-  clanId: string,
-  text: string,
-  replyToId?: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ text, ...(replyToId ? { replyToId } : {}) }),
-  });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось отправить сообщение.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
-
-export async function deleteClanMessage(
-  clanId: string,
-  msgId: string
-): Promise<ApiResult<ClanDetail>> {
-  const token = await resolveServerUserToken();
-  if (!token) return { ok: false, error: 'Нет авторизации на сервере.' };
-  const out = await apiJsonFetch(
-    `/api/clans/${encodeURIComponent(clanId)}/chat/${encodeURIComponent(msgId)}`,
-    {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
+  const cleanupLocal = () => {
+    if (storedUser) {
+      const locals = loadLocalAccounts();
+      const filtered = locals.filter(
+        (a) =>
+          a.id !== storedUser.id && a.usernameLower !== storedUser.username.toLowerCase()
+      );
+      if (filtered.length !== locals.length) {
+        saveLocalAccounts(filtered);
+      }
+      const cached = getCachedLeaderboard();
+      if (cached) {
+        const lower = storedUser.username.toLowerCase();
+        cacheLeaderboard({
+          ...cached,
+          entries: cached.entries.filter(
+            (e) => e.id !== storedUser.id && e.username.toLowerCase() !== lower
+          ),
+          totalRegistered: Math.max(0, cached.totalRegistered - 1),
+          myRank: null,
+          myEntry: null,
+        });
+      }
     }
-  );
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось удалить сообщение.') };
-  return { ok: true, data: (out.body as { clan: ClanDetail }).clan };
-}
+    clearAuthSession();
+  };
 
-export async function deleteClan(clanId: string): Promise<ApiResult<true>> {
-  const token = await resolveServerUserToken();
-  const adminToken = getStoredAdminToken();
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (adminToken && !adminToken.startsWith('local_unlocked_')) {
-    headers['x-admin-token'] = adminToken;
+  if (!token || token.startsWith('local_tok_')) {
+    cleanupLocal();
+    return { ok: true, data: { deleted: true } };
   }
-  const out = await apiJsonFetch(`/api/clans/${encodeURIComponent(clanId)}`, {
+
+  const out = await apiJsonFetch('/api/auth/me', {
     method: 'DELETE',
-    headers,
+    headers: { Authorization: `Bearer ${token}` },
   });
-  if (out.kind === 'unreachable') return { ok: false, error: 'Нет связи с сервером.' };
-  if (!out.ok) return { ok: false, error: extractBodyError(out.body, 'Не удалось удалить клан.') };
-  return { ok: true, data: true };
+
+  if (out.kind === 'unreachable') {
+    return { ok: false, error: 'Нет связи с сервером. Попробуй чуть позже.' };
+  }
+
+  if (out.status === 401 || out.status === 404 || out.ok) {
+    cleanupLocal();
+    return { ok: true, data: { deleted: true } };
+  }
+
+  return { ok: false, error: extractBodyError(out.body, 'Не удалось удалить аккаунт.') };
 }

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>BLACK STANT 2D Studio — Движок и редактор уровней</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="studio-app">
+      <!-- Top Toolbar -->
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-badge">2D</span>
+          <span class="brand-title">BLACK STUDIO</span>
+        </div>
+
+        <div class="toolbar-group">
+          <button id="btn-play" class="btn btn-play" type="button">▶ Play</button>
+          <button id="btn-stop" class="btn btn-stop" type="button" disabled>■ Stop</button>
+        </div>
+
+        <div class="toolbar-group toolbar-create">
+          <span class="toolbar-label">Добавить:</span>
+          <button class="btn btn-tool" data-add-type="platform" type="button">+ Платформа</button>
+          <button class="btn btn-tool" data-add-type="coin" type="button">+ Монета</button>
+          <button class="btn btn-tool" data-add-type="enemy" type="button">+ Враг</button>
+          <button class="btn btn-tool" data-add-type="trigger" type="button">+ Триггер</button>
+          <button class="btn btn-tool" data-add-type="player" type="button">+ Игрок</button>
+          <button id="btn-place-mode" class="btn btn-toggle" type="button" title="Включить размещение кликом на сетке">
+            Клик-спавн: Выкл
+          </button>
+        </div>
+
+        <div class="toolbar-group">
+          <label class="grid-toggle">
+            <input id="chk-grid-snap" type="checkbox" checked />
+            <span>Привязка к сетке (16px)</span>
+          </label>
+          <button id="btn-center-cam" class="btn btn-ghost" type="button">Центр</button>
+          <button id="btn-reset-demo" class="btn btn-ghost" type="button">Демо-уровень</button>
+        </div>
+
+        <div class="toolbar-group toolbar-export">
+          <button id="btn-export-json" class="btn btn-secondary" type="button">Export JSON</button>
+          <button id="btn-import-json" class="btn btn-secondary" type="button">Import JSON</button>
+          <input id="input-import-json" type="file" accept=".json,application/json" hidden />
+          <button id="btn-export-html" class="btn btn-accent" type="button">Export Standalone Game</button>
+        </div>
+      </header>
+
+      <!-- Main 3-Panel Studio Workspace -->
+      <main class="workspace">
+        <!-- Left Panel: Hierarchy -->
+        <aside class="panel panel-left">
+          <div class="panel-header">
+            <span>Hierarchy (Сцена)</span>
+            <span id="entity-count" class="count-badge">0</span>
+          </div>
+          <div id="hierarchy-list" class="hierarchy-list"></div>
+          <div class="panel-footer">
+            <button id="btn-duplicate" class="btn btn-ghost btn-sm" type="button">Дублировать</button>
+            <button id="btn-delete" class="btn btn-danger btn-sm" type="button">Удалить</button>
+          </div>
+        </aside>
+
+        <!-- Center Panel: Viewport Canvas -->
+        <section class="viewport-wrap">
+          <div class="viewport-hud">
+            <div id="mode-indicator" class="mode-pill mode-edit">РЕДАКТОР</div>
+            <div id="play-stats" class="play-stats hidden">
+              <span id="stat-coins">Монеты: 0/0</span>
+              <span id="stat-status">В игре</span>
+            </div>
+            <div id="viewport-coords" class="coords-pill">X: 0 · Y: 0</div>
+          </div>
+
+          <canvas id="game-canvas"></canvas>
+
+          <div id="status-toast" class="status-toast hidden"></div>
+
+          <!-- Touch Controls shown in Play mode for mobile/Android testing -->
+          <div id="touch-controls" class="touch-controls hidden">
+            <div class="touch-dpad">
+              <button id="touch-left" class="touch-btn" type="button">◀</button>
+              <button id="touch-right" class="touch-btn" type="button">▶</button>
+            </div>
+            <button id="touch-jump" class="touch-btn touch-jump" type="button">ПРЫЖОК</button>
+          </div>
+
+          <div class="viewport-hint">
+            <span id="hint-text">ЛКМ: выбрать / тянуть · Углы: размер · ПКМ / Shift+ЛКМ: двигать камеру · Del: удалить</span>
+          </div>
+        </section>
+
+        <!-- Right Panel: Inspector -->
+        <aside class="panel panel-right">
+          <div class="panel-header">
+            <span>Inspector (Свойства)</span>
+          </div>
+          <div id="inspector-empty" class="inspector-empty">
+            Выбери объект на сцене или в списке Hierarchy, чтобы изменить его свойства в реальном времени.
+          </div>
+          <form id="inspector-form" class="inspector-form hidden">
+            <div class="field">
+              <label for="inp-id">ID</label>
+              <input id="inp-id" type="text" readonly />
+            </div>
+            <div class="field">
+              <label for="inp-name">Имя</label>
+              <input id="inp-name" type="text" maxlength="40" />
+            </div>
+            <div class="field">
+              <label for="inp-type">Тип</label>
+              <select id="inp-type">
+                <option value="player">player (Игрок)</option>
+                <option value="platform">platform (Платформа)</option>
+                <option value="enemy">enemy (Враг)</option>
+                <option value="coin">coin (Монета)</option>
+                <option value="trigger">trigger (Триггер)</option>
+              </select>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <label for="inp-x">X</label>
+                <input id="inp-x" type="number" step="1" />
+              </div>
+              <div class="field">
+                <label for="inp-y">Y</label>
+                <input id="inp-y" type="number" step="1" />
+              </div>
+              <div class="field">
+                <label for="inp-w">Width (W)</label>
+                <input id="inp-w" type="number" min="8" step="1" />
+              </div>
+              <div class="field">
+                <label for="inp-h">Height (H)</label>
+                <input id="inp-h" type="number" min="8" step="1" />
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <label for="inp-color">Цвет</label>
+                <input id="inp-color" type="color" />
+              </div>
+              <div class="field">
+                <label for="inp-speed">Скорость</label>
+                <input id="inp-speed" type="number" step="10" min="0" max="2000" />
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <label for="inp-vx">Velocity X</label>
+                <input id="inp-vx" type="number" step="10" />
+              </div>
+              <div class="field">
+                <label for="inp-vy">Velocity Y</label>
+                <input id="inp-vy" type="number" step="10" />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="inp-jump">Сила прыжка</label>
+              <input id="inp-jump" type="number" step="10" min="0" max="2000" />
+            </div>
+
+            <div class="field-checks">
+              <label class="check-row">
+                <input id="inp-static" type="checkbox" />
+                <span>isStatic (неподвижный)</span>
+              </label>
+              <label class="check-row">
+                <input id="inp-gravity" type="checkbox" />
+                <span>hasGravity (гравитация)</span>
+              </label>
+            </div>
+
+            <div class="scene-settings">
+              <div class="section-title">Настройки мира</div>
+              <div class="field-grid">
+                <div class="field">
+                  <label for="inp-world-gravity">Гравитация</label>
+                  <input id="inp-world-gravity" type="number" step="50" min="0" max="4000" />
+                </div>
+                <div class="field">
+                  <label for="inp-cam-lerp">Camera Lerp</label>
+                  <input id="inp-cam-lerp" type="number" step="0.02" min="0.01" max="1" />
+                </div>
+              </div>
+            </div>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <script src="physics.js" defer></script>
+    <script src="engine.js" defer></script>
+    <script src="exporter.js" defer></script>
+    <script src="editor.js" defer></script>
+  </body>
+</html>

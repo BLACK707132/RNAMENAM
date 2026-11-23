@@ -38,6 +38,7 @@ import {
   Shirt,
   Shield,
   ShoppingBag,
+  HelpCircle,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
@@ -56,7 +57,7 @@ import {
   fetchAdminCustomPromos,
   type CustomPromoItem,
 } from '../utils/promos';
-import { SCOOTERS, type ScooterId } from '../data/scooters';
+import { getEffectiveScooterStats, SCOOTERS, type ScooterId } from '../data/scooters';
 import {
   MAPS,
   WEATHERS,
@@ -76,6 +77,7 @@ import {
   loginAdmin,
   logoutAdminServer,
   resetAdminUser,
+  setAdminUserVip,
   unkickAdminUser,
   verifyStoredAdminToken,
   wipeAllAdminUsers,
@@ -102,11 +104,15 @@ interface SettingsModalProps {
   onOpenShop: () => void;
   onOpenOutfits: () => void;
   onOpenHelmets: () => void;
+  onOpenTutorial: () => void;
+  onOpenPromo: () => void;
   totalPlayers: number;
   coins: number;
   authUser: AuthUser | null;
   currentScooterId: ScooterId;
   ownedScooters: ScooterId[];
+  ownedVesc?: ScooterId[];
+  ownedMotors?: ScooterId[];
   ownedScootersCount: number;
   ownedHelmetsCount: number;
   ownedOutfitsCount: number;
@@ -115,6 +121,7 @@ interface SettingsModalProps {
   onRemoveCoins: (amount: number) => void;
   onResetCoins: () => void;
   onSetCoins: (amount: number) => void;
+  onSetSelfVip?: (vip: boolean) => void;
   onAdminSelectScooter: (id: ScooterId) => void;
   onAdminUnlockAllScooters: () => void;
   onFullResetSelf: () => void;
@@ -155,11 +162,15 @@ export function SettingsModal({
   onOpenShop,
   onOpenOutfits,
   onOpenHelmets,
+  onOpenTutorial,
+  onOpenPromo,
   totalPlayers,
   coins,
   authUser,
   currentScooterId,
   ownedScooters,
+  ownedVesc = [],
+  ownedMotors = [],
   ownedScootersCount,
   ownedHelmetsCount,
   ownedOutfitsCount,
@@ -168,6 +179,7 @@ export function SettingsModal({
   onRemoveCoins,
   onResetCoins,
   onSetCoins,
+  onSetSelfVip,
   onAdminSelectScooter,
   onAdminUnlockAllScooters,
   onFullResetSelf,
@@ -527,6 +539,29 @@ export function SettingsModal({
     setVipMsg({ ok: true, text: label });
   };
 
+  const handleToggleUserVip = async (targetUser: AdminUserSummary) => {
+    if (!isOwner) return;
+    const nextVip = !targetUser.vip;
+    setBusyUserId(targetUser.id);
+    const res = await setAdminUserVip(targetUser.username, nextVip);
+    setBusyUserId(null);
+    if (!res.ok) {
+      setVipMsg({ ok: false, text: res.error });
+      return;
+    }
+    sound.playBuy();
+    setAdminUsers((prev) => prev.map((u) => (u.id === res.data.id ? res.data : u)));
+    if (authUser && res.data.username.toLowerCase() === authUser.username.toLowerCase()) {
+      onSetSelfVip?.(res.data.vip);
+    }
+    setVipMsg({
+      ok: true,
+      text: res.data.vip
+        ? `Игроку @${res.data.username} выдан VIP ×2!`
+        : `У игрока @${res.data.username} снят VIP ×2.`,
+    });
+  };
+
   const handleDeleteAccount = async (targetUser: AdminUserSummary) => {
     if (!isOwner) return;
     setBusyUserId(targetUser.id);
@@ -722,6 +757,55 @@ export function SettingsModal({
           </button>
         </div>
 
+        {/* Sound, Controls & Promo Quick Panel (moved cleanly from HUD/Menu top bars) */}
+        <div className="grid grid-cols-3 gap-1.5 mb-3">
+          <button
+            type="button"
+            onClick={onToggleMute}
+            className={`h-11 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition px-2 ${
+              muted
+                ? 'bg-[#1e2631] border-white/10 text-white/70 hover:text-white'
+                : 'bg-[#ff6a1a]/18 border-[#ff6a1a]/45 text-white hover:bg-[#ff6a1a]/28'
+            }`}
+          >
+            {muted ? (
+              <>
+                <VolumeX className="w-4 h-4 text-red-300 shrink-0" />
+                <span className="truncate">Звук выкл</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-4 h-4 text-[#ff8b4a] shrink-0" />
+                <span className="truncate">Звук вкл</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenTutorial();
+            }}
+            className="h-11 rounded-xl bg-[#1e2631] hover:bg-[#27313f] border border-white/10 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition px-2"
+          >
+            <HelpCircle className="w-4 h-4 text-[#ffc599] shrink-0" />
+            <span className="truncate">Управление</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenPromo();
+            }}
+            className="h-11 rounded-xl bg-[#ff6a1a]/18 hover:bg-[#ff6a1a]/28 border border-[#ff6a1a]/40 text-[#ffc599] text-xs font-bold flex items-center justify-center gap-1.5 transition px-2"
+          >
+            <Gift className="w-4 h-4 text-[#ff8b4a] shrink-0" />
+            <span className="truncate">Промокод</span>
+          </button>
+        </div>
+
         {/* Weather, Time of Day & Map Section */}
         <div className="rounded-xl bg-[#1e2631] border border-white/10 p-3.5 mb-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
@@ -903,30 +987,6 @@ export function SettingsModal({
           <div className="font-mono-num text-xl font-extrabold text-white">
             {totalPlayers.toLocaleString('ru-RU')}
           </div>
-        </div>
-
-        {/* Sound Toggle */}
-        <div className="rounded-xl bg-[#1e2631] border border-white/8 p-3.5 mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/80 shrink-0">
-              {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white">Звуковые эффекты</div>
-              <div className="text-xs text-white/55">{muted ? 'Выключены' : 'Включены'}</div>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onToggleMute}
-            className={`h-9 px-4 rounded-xl font-bold text-xs transition ${
-              muted
-                ? 'bg-white/10 hover:bg-white/15 text-white/80'
-                : 'bg-[#ff6a1a] hover:bg-[#ff7b33] text-white'
-            }`}
-          >
-            {muted ? 'Выкл' : 'Вкл'}
-          </button>
         </div>
 
         {/* Player Wallet / Receive Offline Code */}
@@ -1296,6 +1356,11 @@ export function SettingsModal({
                   {SCOOTERS.map((sc) => {
                     const isActive = currentScooterId === sc.id;
                     const isOwned = ownedScooters.includes(sc.id);
+                    const effMax = getEffectiveScooterStats(
+                      sc,
+                      ownedVesc.includes(sc.id),
+                      ownedMotors.includes(sc.id)
+                    ).maxKmh;
                     return (
                       <button
                         key={sc.id}
@@ -1330,8 +1395,8 @@ export function SettingsModal({
                             {isActive
                               ? '✓ Выбран'
                               : isOwned
-                                ? `Есть · ${sc.maxKmh} км/ч`
-                                : `${sc.maxKmh} км/ч`}
+                                ? `Есть · ${effMax} км/ч`
+                                : `${effMax} км/ч`}
                           </div>
                         </div>
                       </button>
@@ -1734,12 +1799,12 @@ export function SettingsModal({
               </>
               )}
 
-              {/* Players Management: Kick (All Admins) + Coins/Reset/Delete (Owner BLACK only; VIP x2 disabled) */}
+              {/* Players Management: Kick (All Admins) + VIP ×2 / Coins / Reset / Delete (Owner BLACK only) */}
               <div className="rounded-xl bg-[#1a222d] border border-[#ffd34d]/35 p-3.5 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                     <Crown className="w-4 h-4 text-[#ffd34d]" />
-                    {isOwner ? 'Игроки: кик, монеты, обнуление' : 'Список игроков (кик)'}
+                    {isOwner ? 'Игроки: VIP ×2, кик, монеты, обнуление' : 'Список игроков (кик)'}
                   </div>
                 </div>
 
@@ -1885,6 +1950,11 @@ export function SettingsModal({
                                 title={u.online ? 'В сети' : 'Не в сети'}
                               />
                               <span className="font-bold text-white">@{u.username}</span>{' '}
+                              {u.vip && (
+                                <span className="px-1 py-0.5 rounded bg-[#ffd34d]/20 border border-[#ffd34d]/45 text-[#ffd34d] text-[9px] font-extrabold shrink-0">
+                                  VIP ×2
+                                </span>
+                              )}
                               <span className="font-mono-num text-[#ffd34d]/85">
                                 🪙 {Math.floor(u.coins).toLocaleString('ru-RU')}
                               </span>
@@ -1927,6 +1997,19 @@ export function SettingsModal({
                                 ))}
                               {isOwner && (
                                 <>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => handleToggleUserVip(u)}
+                                    title={u.vip ? 'Снять VIP ×2' : 'Выдать VIP ×2'}
+                                    className={`px-2 py-1 rounded font-bold text-[10px] transition ${
+                                      u.vip
+                                        ? 'bg-[#ffd34d] text-[#11151c] hover:bg-[#ffe07d]'
+                                        : 'bg-[#ffd34d]/15 hover:bg-[#ffd34d]/28 border border-[#ffd34d]/35 text-[#ffd34d]'
+                                    }`}
+                                  >
+                                    {u.vip ? 'VIP ✓' : 'VIP ×2'}
+                                  </button>
                                   <button
                                     type="button"
                                     disabled={isBusy}

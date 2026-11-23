@@ -1,5 +1,14 @@
 import { memo, useEffect, useRef } from 'react';
-import { getScooter, SCOOTERS, type ScooterId, type ScooterSpec } from '../data/scooters';
+import {
+  getEffectiveScooterStats,
+  getScooter,
+  getScooterLight,
+  SCOOTERS,
+  type LightId,
+  type ScooterId,
+  type ScooterPaintMap,
+  type ScooterSpec,
+} from '../data/scooters';
 import { getHelmet, type HelmetId } from '../data/helmets';
 import { drawStyledRider, getOutfit, type OutfitId } from '../data/outfits';
 import type { MapId, TimeOfDay, WeatherId } from '../data/maps';
@@ -7,6 +16,7 @@ import {
   SCOOTER_WHEEL_CONFIGS,
   disposeScooterRig,
   prepareScooterWheelRig,
+  renderPaintedScooterCanvas,
   type PreparedScooterRig,
 } from '../utils/wheelRig';
 import { sound } from '../utils/sound';
@@ -14,7 +24,7 @@ import { sound } from '../utils/sound';
 const SCOOTER_IMAGE_CACHE: Partial<Record<ScooterId, HTMLImageElement>> = {};
 const SCOOTER_IMAGE_INFLIGHT: Partial<Record<ScooterId, Promise<HTMLImageElement | null>>> = {};
 
-function loadScooterImageCached(
+export function loadScooterImageCached(
   sc: ScooterSpec,
   highPriority = false
 ): Promise<HTMLImageElement | null> {
@@ -26,8 +36,9 @@ function loadScooterImageCached(
   if (pending) return pending;
 
   const cleanSpriteSrc = sc.spriteSrc.split('?')[0];
+  const cleanOriginalSrc = sc.originalSrc.split('?')[0];
   const candidates = Array.from(
-    new Set([sc.spriteSrc, cleanSpriteSrc, sc.originalSrc].filter(Boolean))
+    new Set([sc.spriteSrc, cleanSpriteSrc, sc.originalSrc, cleanOriginalSrc].filter(Boolean))
   );
 
   const task = new Promise<HTMLImageElement | null>((resolve) => {
@@ -165,6 +176,8 @@ interface RiderPose {
   backHand: Pt;
   frontElbow: Pt;
   frontHand: Pt;
+  backFootAngle?: number;
+  hideBackLeg?: boolean;
 }
 
 interface RagdollNode {
@@ -215,6 +228,10 @@ interface GameCanvasProps {
   coins: number;
   bestRun: number;
   vip: boolean;
+  paints?: ScooterPaintMap;
+  lightId?: LightId;
+  hasVesc?: boolean;
+  hasSecondMotor?: boolean;
   gasRef: React.MutableRefObject<boolean>;
   brakeRef: React.MutableRefObject<boolean>;
   oneHandRef: React.MutableRefObject<boolean>;
@@ -286,6 +303,10 @@ export const GameCanvas = memo(function GameCanvas({
   coins,
   bestRun,
   vip,
+  paints = {},
+  lightId = 'stock',
+  hasVesc = false,
+  hasSecondMotor = false,
   gasRef,
   brakeRef,
   oneHandRef,
@@ -303,6 +324,8 @@ export const GameCanvas = memo(function GameCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imagesRef = useRef<Partial<Record<ScooterId, HTMLImageElement>>>({});
   const rigsRef = useRef<Partial<Record<ScooterId, PreparedScooterRig>>>({});
+  const rigPaintKeyRef = useRef<Partial<Record<ScooterId, string>>>({});
+  const paintedFallbackRef = useRef<Partial<Record<ScooterId, HTMLCanvasElement>>>({});
   const rigOrderRef = useRef<ScooterId[]>([]);
 
   // Keep latest props in refs for 60fps loop without restarting rAF
@@ -317,6 +340,10 @@ export const GameCanvas = memo(function GameCanvas({
   const coinsRef = useRef<number>(coins);
   const bestRunRef = useRef<number>(bestRun);
   const vipRef = useRef<boolean>(vip);
+  const paintsRef = useRef<ScooterPaintMap>(paints);
+  const lightIdRef = useRef<LightId>(lightId);
+  const hasVescRef = useRef<boolean>(hasVesc);
+  const hasSecondMotorRef = useRef<boolean>(hasSecondMotor);
   const onBankCoinsRef = useRef(onBankCoins);
   const onNewBestRef = useRef(onNewBest);
   const onCrashFinishRef = useRef(onCrashFinish);
@@ -334,6 +361,10 @@ export const GameCanvas = memo(function GameCanvas({
   coinsRef.current = coins;
   bestRunRef.current = bestRun;
   vipRef.current = vip;
+  paintsRef.current = paints;
+  lightIdRef.current = lightId;
+  hasVescRef.current = hasVesc;
+  hasSecondMotorRef.current = hasSecondMotor;
   onBankCoinsRef.current = onBankCoins;
   onNewBestRef.current = onNewBest;
   onCrashFinishRef.current = onCrashFinish;
@@ -392,10 +423,15 @@ export const GameCanvas = memo(function GameCanvas({
     } as CrashScooter,
   });
 
+  const activePaint = paints[scooterId];
+  const activePaintKey = `${scooterId}:${activePaint?.primary ?? ''}:${activePaint?.secondary ?? ''}`;
+
   // Lazily load & cache scooter sprites globally while keeping a 2-slot LRU wheel rig cache
   useEffect(() => {
     let cancelled = false;
     const sc = getScooter(scooterId);
+    const paint = paints[scooterId];
+    const paintKey = `${sc.id}:${paint?.primary ?? ''}:${paint?.secondary ?? ''}`;
 
     const storeRig = (id: ScooterId, rig: PreparedScooterRig | null) => {
       if (cancelled || !rig) return;
@@ -404,6 +440,7 @@ export const GameCanvas = memo(function GameCanvas({
         disposeScooterRig(existing);
       }
       rigsRef.current[id] = rig;
+      rigPaintKeyRef.current[id] = paintKey;
       rigOrderRef.current = rigOrderRef.current.filter((item) => item !== id);
       rigOrderRef.current.push(id);
       while (rigOrderRef.current.length > 2) {
@@ -413,6 +450,7 @@ export const GameCanvas = memo(function GameCanvas({
           if (oldRig) {
             disposeScooterRig(oldRig);
             delete rigsRef.current[oldest];
+            delete rigPaintKeyRef.current[oldest];
           }
         }
       }
@@ -421,6 +459,7 @@ export const GameCanvas = memo(function GameCanvas({
     const existingRig = rigsRef.current[sc.id];
     if (
       existingRig &&
+      rigPaintKeyRef.current[sc.id] === paintKey &&
       existingRig.body.width > 0 &&
       existingRig.rearWheel.width > 0 &&
       existingRig.frontWheel.width > 0
@@ -438,15 +477,21 @@ export const GameCanvas = memo(function GameCanvas({
       if (cancelled) return;
       requestAnimationFrame(() => {
         if (cancelled) return;
-        const rig = prepareScooterWheelRig(sc.id, img);
+        const rig = prepareScooterWheelRig(sc.id, img, paint);
         storeRig(sc.id, rig);
+        if (!rig && paint && (paint.primary || paint.secondary)) {
+          const fb = renderPaintedScooterCanvas(img, sc.id, paint);
+          if (fb) paintedFallbackRef.current[sc.id] = fb;
+        } else {
+          delete paintedFallbackRef.current[sc.id];
+        }
       });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [scooterId]);
+  }, [scooterId, activePaintKey]);
 
   // Free all offscreen wheel-rig canvases on unmount
   useEffect(() => {
@@ -459,6 +504,8 @@ export const GameCanvas = memo(function GameCanvas({
           delete rigs[key];
         }
       }
+      rigPaintKeyRef.current = {};
+      paintedFallbackRef.current = {};
       rigOrderRef.current = [];
     };
   }, []);
@@ -469,6 +516,7 @@ export const GameCanvas = memo(function GameCanvas({
     if (mode === 'play') {
       sim.a = 0;
       sim.w = 0;
+      sim.kmh = 8;
       sim.pend = 0;
       sim.lost = 0;
       sim.wheelieM = 0;
@@ -656,9 +704,9 @@ export const GameCanvas = memo(function GameCanvas({
         const backStemFootX = stemFootX + 5.5;
         const backStemFootY = stemFootY - 8.5;
 
-        const knBackKneeX = lerp(baseKneeX - 4, m.backFootX + 10, knEase);
-        const knBackKneeY = lerp(baseKneeY, m.deckY - 38, knEase);
-        const knBackFootX = lerp(m.backFootX, m.backFootX - 6, knEase);
+        const knBackKneeX = lerp(baseKneeX, m.backFootX + 10, knEase);
+        const knBackKneeY = lerp(baseKneeY + 2, m.deckY - 38, knEase);
+        const knBackFootX = lerp(m.frontFootX, m.backFootX - 6, knEase);
         const knBackFootY = m.deckY - 2;
 
         const backKneeX = lerp(knBackKneeX, lerp(hipX, backStemFootX, 0.52) + 11, stEase);
@@ -735,6 +783,8 @@ export const GameCanvas = memo(function GameCanvas({
             x: lerp(fHandAfterOhX, nhFrontHandX, nhEase) + nhArc * 6,
             y: lerp(fHandAfterOhY, nhFrontHandY, nhEase) + nhArc * 10,
           },
+          backFootAngle: stEase > 0.01 ? -0.58 * stEase : undefined,
+          hideBackLeg: knEase < 0.03 && stEase < 0.03,
         };
       }
 
@@ -751,13 +801,13 @@ export const GameCanvas = memo(function GameCanvas({
       const stemFootX = lerp(m.gripX, stemBaseX, 0.38) + 1;
       const stemFootY = lerp(m.gripY, stemBaseY, 0.38);
 
-      // Far/back leg: stays solidly planted flat on the rear deck on standing electric scooters
+      // Back leg stays planted squarely on rear deck across standing, one-knee, and steering-column tricks
       const backFootX = lerp(m.backFootX, m.backFootX - 8, knEase) - stEase * 2;
       const backFootY = m.deckY - 3;
       const backKneeX = lerp(m.backFootX + 10 - ohEase * 2 - stEase * 3, m.backFootX + 14, knEase);
       const backKneeY = lerp(m.deckY - stemH * 0.31 + stEase * 2, m.deckY - stemH * 0.25, knEase);
 
-      // Near/front leg: normal standing, one-knee on deck, or lifted & planted squarely onto the steering column
+      // Front leg: normal standing, one-knee on deck, or lifted & planted squarely onto the steering column
       const knFrontKneeX = lerp(m.frontFootX + 2 - ohEase * 2, m.frontFootX - 5, knEase);
       const knFrontKneeY = lerp(m.deckY - stemH * 0.30, m.deckY - 6, knEase);
       const knFrontFootX = lerp(m.frontFootX, m.backFootX + 4, knEase);
@@ -849,7 +899,17 @@ export const GameCanvas = memo(function GameCanvas({
       nhTime = 0
     ) => {
       const leanDeg = Math.min(25, wheelieAngle * 0.35);
-      const p = getRiderPose(s, m, leanDeg, oneHand, ohTime, knee, stemFoot, noHands, nhTime);
+      const p = getRiderPose(
+        s,
+        m,
+        leanDeg,
+        oneHand,
+        ohTime,
+        knee,
+        stemFoot,
+        noHands,
+        nhTime
+      );
       const kn = Math.max(0, Math.min(1, knee));
       const knEase = kn * kn * (3 - 2 * kn);
       const st = Math.max(0, Math.min(1, stemFoot));
@@ -865,7 +925,8 @@ export const GameCanvas = memo(function GameCanvas({
           flatFeet: true,
           kneeling: knEase,
           frontFootAngle: stEase > 0.01 ? -0.52 * stEase : undefined,
-          backFootAngle: s.seated && stEase > 0.01 ? -0.58 * stEase : undefined,
+          backFootAngle: p.backFootAngle ?? (s.seated && stEase > 0.01 ? -0.58 * stEase : undefined),
+          hideBackLeg: p.hideBackLeg,
         },
         1.16,
         getOutfit(outfitIdRef.current),
@@ -1095,17 +1156,21 @@ export const GameCanvas = memo(function GameCanvas({
     ): {
       bLocalX: number;
       bLocalY: number;
-      kind: 'fender';
+      kind: 'fender' | 'bugel';
       pad: number;
       touchDeg: number;
       maxCushionDeg: number;
       loopOutDeg: number;
     } | null => {
-      if (s.scrapeKind === 'fender' && s.fenderX !== undefined && s.fenderY !== undefined) {
+      if (
+        (s.scrapeKind === 'fender' || s.scrapeKind === 'bugel') &&
+        s.fenderX !== undefined &&
+        s.fenderY !== undefined
+      ) {
         const bLocalX = m.imgX + s.fenderX * m.drawW;
         const bLocalY = m.imgY + s.fenderY * m.drawH;
         let touchDeg = 94;
-        for (let deg = 82; deg <= 126; deg += 0.5) {
+        for (let deg = 72; deg <= 126; deg += 0.5) {
           const rad = (-deg * Math.PI) / 180;
           const clearance = m.wheelBottom - (bLocalX * Math.sin(rad) + bLocalY * Math.cos(rad));
           if (clearance <= 2) {
@@ -1116,7 +1181,7 @@ export const GameCanvas = memo(function GameCanvas({
         return {
           bLocalX,
           bLocalY,
-          kind: 'fender',
+          kind: s.scrapeKind,
           pad: s.scrapePadPx ?? 5.5,
           touchDeg,
           maxCushionDeg: touchDeg + 5.5,
@@ -1169,6 +1234,13 @@ export const GameCanvas = memo(function GameCanvas({
         // 3) Scooter body, swingarms, forks, calipers & fenders ON TOP
         ctx.drawImage(rig.body, m.imgX, m.imgY, m.drawW, m.drawH);
         ctx.restore();
+      } else if (paintedFallbackRef.current[s.id]) {
+        ctx.save();
+        if (s.baseTiltDeg !== 0) {
+          ctx.rotate((s.baseTiltDeg * Math.PI) / 180);
+        }
+        ctx.drawImage(paintedFallbackRef.current[s.id]!, m.imgX, m.imgY, m.drawW, m.drawH);
+        ctx.restore();
       } else if (sprite && sprite.complete && sprite.naturalWidth > 0) {
         ctx.save();
         if (s.baseTiltDeg !== 0) {
@@ -1217,10 +1289,23 @@ export const GameCanvas = memo(function GameCanvas({
       sim.burnout += ((isBurnout ? 1 : 0) - sim.burnout) * Math.min(1, dt * (isBurnout ? 7.5 : 5.5));
       if (sim.burnout < 0.005) sim.burnout = 0;
 
-      // Smoothly damp G-force pullback on throttle so rapid double-tapping GAS never teleports the scooter
-      const sfNow = curMode === 'play' ? Math.max(0, Math.min(1, (sim.kmh - 34) / 92)) : 0;
-      const targetThrust = throttleOn && !brkOn ? -sim.W * 0.014 * sfNow : 0;
-      sim.thrustShift += (targetThrust - sim.thrustShift) * Math.min(1, dt * 6.5);
+      const effStats = getEffectiveScooterStats(
+        s,
+        hasVescRef.current,
+        hasSecondMotorRef.current
+      );
+      const vescLaunch = hasVescRef.current ? 1.28 : 1.0;
+      const motorLaunch = hasSecondMotorRef.current ? 1.62 : 1.0;
+      const launchMult = vescLaunch * motorLaunch;
+      const lowRatio = Math.max(0, 1 - sim.kmh / Math.max(48, effStats.maxKmh * 0.58));
+
+      // Punchy off-the-line G-force squat/pullback so VESC + 2nd motor visibly rip from standstill
+      const sfNow = curMode === 'play' ? Math.max(0, Math.min(1, (sim.kmh - 24) / 88)) : 0;
+      const targetThrust =
+        throttleOn && !brkOn
+          ? -sim.W * (0.015 * sfNow + 0.017 * lowRatio * Math.min(2.0, launchMult))
+          : 0;
+      sim.thrustShift += (targetThrust - sim.thrustShift) * Math.min(1, dt * 8.5);
 
       // Realistic progressive scooter speedometer (km/h):
       // - Burnout holds the bike in place (0 km/h) while rear tire rips smoke
@@ -1231,15 +1316,16 @@ export const GameCanvas = memo(function GameCanvas({
           ? isBurnout
             ? 0
             : brkOn
-              ? Math.max(8, s.maxKmh * 0.14)
+              ? Math.max(8, effStats.maxKmh * 0.14)
               : nhActive
-                ? Math.max(18, s.maxKmh * 0.36)
+                ? Math.max(18, effStats.maxKmh * 0.36)
                 : throttleOn
-                  ? Math.min(s.maxKmh, s.maxKmh * (0.94 + (sim.a / 102) * 0.08))
-                  : Math.max(18, s.maxKmh * 0.44)
+                  ? Math.min(effStats.maxKmh, effStats.maxKmh * (0.95 + (sim.a / 102) * 0.07))
+                  : Math.max(18, effStats.maxKmh * 0.44)
           : curMode === 'crash'
             ? 0
-            : Math.round(Math.min(48, s.maxKmh * 0.36));
+            : Math.round(Math.min(48, effStats.maxKmh * 0.36));
+      const launchRateBonus = throttleOn && !brkOn ? lowRatio * 1.4 * effStats.power * launchMult : 0;
       const kmhRate =
         curMode === 'crash'
           ? 6.2
@@ -1250,15 +1336,33 @@ export const GameCanvas = memo(function GameCanvas({
               : nhActive
                 ? 0.24
                 : throttleOn
-                  ? 1.15 + s.power * 0.42
+                  ? 1.35 + effStats.power * 0.58 + launchRateBonus
                   : 0.78;
       sim.kmh += (targetKmh - sim.kmh) * Math.min(1, dt * kmhRate);
+      if (curMode === 'play' && throttleOn && !brkOn && !nhActive && lowRatio > 0.08) {
+        sim.kmh = Math.min(
+          effStats.maxKmh,
+          sim.kmh + dt * 26 * effStats.power * launchMult * lowRatio
+        );
+      }
       if (curMode === 'play' && nhActive && sim.kmh > prevKmh) {
         sim.kmh = prevKmh;
       }
       if (sim.kmh < 0.25 && (curMode === 'crash' || isBurnout)) {
         sim.kmh = 0;
       }
+
+      sound.updateMotor({
+        active: curMode === 'play' && !pausedRef.current,
+        scooterId: s.id,
+        kmh: sim.kmh,
+        maxKmh: effStats.maxKmh,
+        throttleOn,
+        brakeOn: brkOn,
+        burnout: sim.burnout,
+        hasVesc: hasVescRef.current,
+        hasSecondMotor: hasSecondMotorRef.current,
+      });
 
       // World scroll velocity smoothly coupled to real km/h (stops smoothly to 0 with no jerky snap at low speed!)
       const kmhBaseBoost = Math.min(1, sim.kmh / 10) * 115;
@@ -1286,7 +1390,7 @@ export const GameCanvas = memo(function GameCanvas({
               : 1.0
           : 1.0;
       const rearAngVel = isBurnout
-        ? (940 / rearR) * (0.85 + 0.3 * s.power)
+        ? (940 / rearR) * (0.85 + 0.3 * effStats.power)
         : (roadLinearVel / rearR) * rearSlipMult;
       const frontGroundAngVel = roadLinearVel / frontR;
 
@@ -1363,8 +1467,15 @@ export const GameCanvas = memo(function GameCanvas({
           sim.a = Math.max(0, sim.a - dt * 45);
           sim.w = 0;
         } else {
+          const angularDamp = 0.92;
+          const launchLiftKick =
+            sim.a < 26
+              ? (1 + 0.55 * (1 - sim.a / 26)) *
+                (hasSecondMotorRef.current ? 1.22 : 1) *
+                (hasVescRef.current ? 1.12 : 1)
+              : 1;
           sim.w +=
-            ((effectiveGas ? 58 * s.power : 0) +
+            ((effectiveGas ? 58 * effStats.power * launchLiftKick : 0) +
               ohLift +
               kneeLift +
               stemLift -
@@ -1372,7 +1483,7 @@ export const GameCanvas = memo(function GameCanvas({
               grav -
               noHandsDrop) *
             dt;
-          sim.w -= sim.w * 0.92 * dt;
+          sim.w -= sim.w * angularDamp * dt;
           sim.a += sim.w * dt;
           if (sim.a < 0) {
             sim.a = 0;
@@ -1380,13 +1491,13 @@ export const GameCanvas = memo(function GameCanvas({
           }
         }
 
-        // Exact pitbike rear fender (крыло) asphalt scrape (чирк) — triggers strictly on real physical contact!
+        // Exact rear fender / bugel asphalt scrape (чирк) — triggers strictly on real physical contact!
         let fenderScraping = false;
         const mNow = getMetrics(s);
         const { ry: ryPlay, pivotX, scScale } = getCamera();
         const activeScrape = getActiveScrapeSpec(s, mNow);
         const loopOutDeg = activeScrape?.loopOutDeg ?? 102;
-        if (activeScrape && sim.a >= Math.max(82, activeScrape.touchDeg - 4)) {
+        if (activeScrape && sim.a >= Math.max(72, activeScrape.touchDeg - 4)) {
           const { bLocalX, bLocalY, pad, touchDeg, maxCushionDeg } = activeScrape;
           const rad = (-sim.a * Math.PI) / 180;
           const cosR = Math.cos(rad);
@@ -1467,17 +1578,22 @@ export const GameCanvas = memo(function GameCanvas({
               color: Math.random() < 0.5 ? '#ff922b' : '#ffd34d',
             });
           }
-        } else if (throttleOn && !brkOn && sim.a < 28 && Math.random() < dt * 12) {
+        } else if (
+          throttleOn &&
+          !brkOn &&
+          sim.a < 28 &&
+          Math.random() < dt * (12 + 12 * lowRatio * Math.min(2, launchMult))
+        ) {
           // Rear tire smoke on hard throttle takeoff
           sim.dust.push({
             x: pivotX - 8 * scScale,
             y: ryPlay - 1 * scScale,
-            vx: -(85 + Math.random() * 65) * sim.u,
-            vy: -(12 + Math.random() * 26) * sim.u,
-            r: (4 + Math.random() * 5) * scScale,
-            grow: (16 + Math.random() * 14) * scScale,
-            life: 0.28 + Math.random() * 0.18,
-            maxLife: 0.46,
+            vx: -(85 + Math.random() * 75) * sim.u,
+            vy: -(12 + Math.random() * 28) * sim.u,
+            r: (4.5 + Math.random() * 5.5) * scScale,
+            grow: (18 + Math.random() * 16) * scScale,
+            life: 0.28 + Math.random() * 0.2,
+            maxLife: 0.48,
           });
         }
 
@@ -1518,9 +1634,13 @@ export const GameCanvas = memo(function GameCanvas({
               if (banked > bestRunRef.current) {
                 bestRunRef.current = banked;
                 onNewBestRef.current(banked);
-                sim.msgs.push({ t: `🏆 РЕКОРД +${banked}`, l: 1.55, color: '#ffd34d' });
+                sim.msgs.push({
+                  t: `🏆 РЕКОРД +${banked}`,
+                  l: 1.55,
+                  color: '#ffd34d',
+                });
               } else {
-                sim.msgs.push({ t: '+' + banked, l: 1.25, color: '#6dff8a' });
+                sim.msgs.push({ t: `+${banked}`, l: 1.25, color: '#6dff8a' });
               }
               sound.playCoinBank(banked);
               onBankCoinsRef.current(banked);
@@ -1528,7 +1648,7 @@ export const GameCanvas = memo(function GameCanvas({
           }
         }
 
-        // Loop-out & crash past 13 o'clock (or past pitbike rear fender limit)
+        // Loop-out & crash past 13 o'clock (or past pitbike rear fender / bugel limit)
         if (sim.a >= loopOutDeg && !sim.ragdoll.active) {
           modeRef.current = 'crash';
           sim.ct = 0;
@@ -2349,33 +2469,36 @@ export const GameCanvas = memo(function GameCanvas({
         ctx.rotate(((-sim.a + sim.burnout * 1.8) * Math.PI) / 180);
 
         // Night LED headlight beam + red rear taillight (mounted cleanly on upper stem / fork mask, NOT on the wheel!)
+        const lightSpec = getScooterLight(lightIdRef.current);
+        const beamRgb = hexToRgbTuple(lightSpec.beamHex);
+        const coreRgb = hexToRgbTuple(lightSpec.coreHex);
+        const headX = s.seated
+          ? m.gripX + 0.095 * m.drawW
+          : Math.max(m.gripX + 10, (m.gripX + m.frontWheelX) * 0.52);
+        const headY = m.gripY + (m.deckY - m.gripY) * 0.24;
         if (isNight) {
-          const headX = s.seated
-            ? m.gripX + 0.095 * m.drawW
-            : Math.max(m.gripX + 10, (m.gripX + m.frontWheelX) * 0.52);
-          const headY = m.gripY + (m.deckY - m.gripY) * 0.24;
-          const beamLen = 285 + speedFactor * 75;
+          const beamLen = 295 + speedFactor * 80;
           const beamGrad = ctx.createLinearGradient(headX, headY, headX + beamLen, headY + 46);
-          beamGrad.addColorStop(0, 'rgba(235, 248, 255, 0.5)');
-          beamGrad.addColorStop(0.45, 'rgba(195, 232, 255, 0.18)');
-          beamGrad.addColorStop(1, 'rgba(195, 232, 255, 0)');
+          beamGrad.addColorStop(0, `rgba(${coreRgb}, 0.54)`);
+          beamGrad.addColorStop(0.45, `rgba(${beamRgb}, 0.22)`);
+          beamGrad.addColorStop(1, `rgba(${beamRgb}, 0)`);
           ctx.fillStyle = beamGrad;
           ctx.beginPath();
           ctx.moveTo(headX, headY - 4);
-          ctx.lineTo(headX + beamLen, headY - 12);
-          ctx.lineTo(headX + beamLen, headY + 94);
+          ctx.lineTo(headX + beamLen, headY - 14);
+          ctx.lineTo(headX + beamLen, headY + 96);
           ctx.lineTo(headX, headY + 6);
           ctx.closePath();
           ctx.fill();
 
           // Bright LED headlight bulb lens glow at the upper stem / fork mask
-          const lampGlow = ctx.createRadialGradient(headX, headY, 1, headX, headY, 14);
-          lampGlow.addColorStop(0, 'rgba(255, 255, 255, 0.92)');
-          lampGlow.addColorStop(0.4, 'rgba(210, 242, 255, 0.45)');
-          lampGlow.addColorStop(1, 'rgba(210, 242, 255, 0)');
+          const lampGlow = ctx.createRadialGradient(headX, headY, 1, headX, headY, 15);
+          lampGlow.addColorStop(0, `rgba(${coreRgb}, 0.94)`);
+          lampGlow.addColorStop(0.42, `rgba(${beamRgb}, 0.55)`);
+          lampGlow.addColorStop(1, `rgba(${beamRgb}, 0)`);
           ctx.fillStyle = lampGlow;
           ctx.beginPath();
-          ctx.arc(headX, headY, 14, 0, Math.PI * 2);
+          ctx.arc(headX, headY, 15, 0, Math.PI * 2);
           ctx.fill();
 
           // Red rear LED taillight glow (under rear fender/seat on pitbikes, rear deck on scooters)
@@ -2387,6 +2510,15 @@ export const GameCanvas = memo(function GameCanvas({
           ctx.fillStyle = tailGlow;
           ctx.beginPath();
           ctx.arc(tailX, tailY, 26, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (lightSpec.id !== 'stock') {
+          const dayLampGlow = ctx.createRadialGradient(headX, headY, 1, headX, headY, 10);
+          dayLampGlow.addColorStop(0, `rgba(${coreRgb}, 0.85)`);
+          dayLampGlow.addColorStop(0.5, `rgba(${beamRgb}, 0.42)`);
+          dayLampGlow.addColorStop(1, `rgba(${beamRgb}, 0)`);
+          ctx.fillStyle = dayLampGlow;
+          ctx.beginPath();
+          ctx.arc(headX, headY, 10, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -2612,19 +2744,22 @@ export const GameCanvas = memo(function GameCanvas({
 
         // Angle label + zone text (non-hue-only cue) with crisp sky contrast shadow
         const isBurnoutHud = curMode === 'play' && sim.burnout > 0.35;
+        const activeScrapeKind = s.scrapeKind;
         const zoneLabel = isBurnoutHud
           ? ' · 🔥 БЕРНАУТ!'
-          : sim.fenderScraping && s.scrapeKind === 'fender'
-            ? ' · ⚡ ЧИРК КРЫЛОМ! ×1.45'
-            : sim.a >= 94
-              ? ' · 13 ОКЛОК!'
-              : sim.a >= 78
-                ? ' · 12 ОКЛОК ×6'
-                : sim.a >= 50
-                  ? ' · ПРОФИ'
-                  : sim.a > 12
-                    ? ' · ВИЛЛИ'
-                    : '';
+          : sim.fenderScraping && activeScrapeKind === 'bugel'
+            ? ' · ⚡ ЧИРК БУГЕЛЕМ! ×1.45'
+            : sim.fenderScraping && activeScrapeKind === 'fender'
+              ? ' · ⚡ ЧИРК КРЫЛОМ! ×1.45'
+              : sim.a >= 94
+                ? ' · 13 ОКЛОК!'
+                : sim.a >= 78
+                  ? ' · 12 ОКЛОК ×6'
+                  : sim.a >= 50
+                    ? ' · ПРОФИ'
+                    : sim.a > 12
+                      ? ' · ВИЛЛИ'
+                      : '';
         ctx.save();
         ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
         ctx.shadowBlur = 4 * u;
@@ -2653,7 +2788,12 @@ export const GameCanvas = memo(function GameCanvas({
         const gy = isWide ? 116 * u : 158 * u;
         const startAng = Math.PI * 0.78;
         const sweep = Math.PI * 1.44;
-        const ratio = Math.max(0, Math.min(1, sim.kmh / s.maxKmh));
+        const effGaugeMax = getEffectiveScooterStats(
+          s,
+          hasVescRef.current,
+          hasSecondMotorRef.current
+        ).maxKmh;
+        const ratio = Math.max(0, Math.min(1, sim.kmh / effGaugeMax));
         const endAng = startAng + sweep;
         const valAng = startAng + sweep * ratio;
 
@@ -2831,6 +2971,7 @@ export const GameCanvas = memo(function GameCanvas({
     const loop = (time: number) => {
       if (lastTime === 0) lastTime = time;
       if (pausedRef.current && modeRef.current === 'play') {
+        sound.stopMotor();
         lastTime = time;
         draw();
         rafId = requestAnimationFrame(loop);
@@ -2846,6 +2987,7 @@ export const GameCanvas = memo(function GameCanvas({
     rafId = requestAnimationFrame(loop);
 
     return () => {
+      sound.stopMotor();
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', resize);
       window.removeEventListener('orientationchange', resize);

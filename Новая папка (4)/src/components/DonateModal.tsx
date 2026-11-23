@@ -27,7 +27,7 @@ const COIN_PACKS: CoinPack[] = [
     amount: 10000,
     label: '10 000 монет',
     shortLabel: '10К монет',
-    priceUsd: 1,
+    priceUsd: 0.5,
     note: 'Старт на Kugoo G2',
   },
   {
@@ -35,7 +35,7 @@ const COIN_PACKS: CoinPack[] = [
     amount: 50000,
     label: '50 000 монет',
     shortLabel: '50К монет',
-    priceUsd: 3,
+    priceUsd: 1,
     note: 'Хватит на Kugoo F3',
   },
   {
@@ -43,7 +43,7 @@ const COIN_PACKS: CoinPack[] = [
     amount: 100000,
     label: '100 000 монет',
     shortLabel: '100К монет',
-    priceUsd: 6,
+    priceUsd: 2,
     note: 'Сразу на Kugoo G2 Pro',
   },
   {
@@ -51,7 +51,7 @@ const COIN_PACKS: CoinPack[] = [
     amount: 500000,
     label: '500 000 монет',
     shortLabel: '500К монет',
-    priceUsd: 13,
+    priceUsd: 4,
     note: 'Хватит на Dualtron Thunder 3',
   },
   {
@@ -59,7 +59,7 @@ const COIN_PACKS: CoinPack[] = [
     amount: 1000000,
     label: '1 000 000 монет',
     shortLabel: '1 лям монет',
-    priceUsd: 16,
+    priceUsd: 6,
     note: 'Максимальная выгода · 3 кейса + гараж',
     featured: true,
   },
@@ -78,7 +78,7 @@ export function DonateModal({
   onOpenRegister,
   onClose,
 }: DonateModalProps) {
-  const vipBuyUrl = buildTelegramDonateUrl('VIP статус (×2 монеты)', 5, user?.username);
+  const vipBuyUrl = buildTelegramDonateUrl('VIP статус (×2 монеты)', 2, user?.username);
   const directTgUrl = `https://t.me/${TELEGRAM_HANDLE}?text=${encodeURIComponent(
     user?.username
       ? `Привет! Вопрос по донату в BLACK STANT. Мой ник: @${user.username}`
@@ -172,7 +172,7 @@ export function DonateModal({
             </div>
 
             <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/8">
-              <div className="font-mono-num text-2xl font-black text-[#ffd34d]">$5</div>
+              <div className="font-mono-num text-2xl font-black text-[#ffd34d]">$2</div>
               <a
                 href={vipBuyUrl}
                 target="_blank"

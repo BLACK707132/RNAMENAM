@@ -1,4 +1,8 @@
-import type { ScooterId } from '../data/scooters';
+import {
+  getScooter,
+  type ScooterId,
+  type ScooterPaint,
+} from '../data/scooters';
 
 interface ArmKeep {
   /** Angle in degrees from wheel center (0 = right, 90 = down, -90 = up, 180 = left) */
@@ -42,6 +46,10 @@ export interface WheelCircleSpec {
   cleanInnerR?: number;
   /** Outer spoke anchor radius as a fraction of R for moto_spokes wheels (default 0.635; ~0.71 for black-rim dirtbikes) */
   spokeOuterR?: number;
+  /** Keep real outer knobby tire lugs instead of shaving or 12-fold blurring them smooth */
+  preserveKnobby?: boolean;
+  /** Preferred unoccluded sector center angle (deg) for sharp real-rotor/spoke/knobby extraction */
+  sectorDeg?: number;
   arms: ArmKeep[];
   caliper?: CaliperKeep;
   fender?: FenderArcKeep;
@@ -53,139 +61,165 @@ export interface ScooterWheelConfig {
 }
 
 /**
- * Pixel-measured exact wheel circles, swingarm/fork keep-masks & G2-Pro-grade spinning rotors
- * for all 13 scooters.
+ * Pixel-measured exact wheel circles, swingarm/fork keep-masks & crisp wheel rigs
+ * for all 16 scooters & pitbikes.
  */
 export const SCOOTER_WHEEL_CONFIGS: Record<ScooterId, ScooterWheelConfig> = {
   c3: {
     rear: {
-      cx: 0.1107,
-      cy: 0.8769,
-      rH: 0.0851,
-      symmetryDeg: 72, // 5-spoke rear wheel
-      hubKeepR: 0.18,
-      rotorStyle: 'rim_bolts',
-      arms: [{ deg: -4, halfW: 0.25 }],
-      fender: { startDeg: -162, endDeg: -12, minR: 0.93 },
-    },
-    front: {
-      cx: 0.8974,
-      cy: 0.9027,
-      rH: 0.0906,
-      symmetryDeg: 72,
+      cx: 0.1098,
+      cy: 0.8767,
+      rH: 0.0853,
+      ellipseX: 0.985,
+      symmetryDeg: 60,
       hubKeepR: 0.19,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.55,
-      arms: [{ deg: -98, halfW: 0.22 }],
-      fender: { startDeg: -168, endDeg: -40, minR: 0.91 },
+      rotorScale: 0.62,
+      cleanInnerR: 0.64,
+      arms: [{ deg: -4, halfW: 0.26 }],
+      fender: { startDeg: -165, endDeg: -12, minR: 0.91 },
+    },
+    front: {
+      cx: 0.8972,
+      cy: 0.9090,
+      rH: 0.0863,
+      ellipseX: 1.005,
+      symmetryDeg: 60,
+      hubKeepR: 0.19,
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.59,
+      cleanInnerR: 0.61,
+      arms: [{ deg: -98, halfW: 0.24 }],
+      fender: { startDeg: -168, endDeg: -38, minR: 0.90 },
     },
   },
   g2: {
     rear: {
-      cx: 0.1274,
-      cy: 0.8892,
-      rH: 0.1012,
+      cx: 0.1216,
+      cy: 0.8915,
+      rH: 0.1046,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.58,
-      arms: [{ deg: -18, halfW: 0.25 }],
-      fender: { startDeg: -175, endDeg: -85, minR: 0.74 },
+      rotorScale: 0.54,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -16, halfW: 0.30, len: 1.35 }],
+      fender: { startDeg: -175, endDeg: -45, minR: 0.90 },
     },
     front: {
-      cx: 0.8862,
-      cy: 0.8887,
-      rH: 0.1018,
+      cx: 0.8922,
+      cy: 0.8905,
+      rH: 0.1057,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.57,
-      arms: [{ deg: -158, halfW: 0.24 }],
+      rotorScale: 0.54,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -162, halfW: 0.28, len: 1.35 }],
+      fender: { startDeg: -155, endDeg: -95, minR: 0.94 },
     },
   },
   gm: {
     rear: {
-      cx: 0.1128,
-      cy: 0.8948,
-      rH: 0.0972,
-      symmetryDeg: 60,
-      hubKeepR: 0.21,
-      rotorStyle: 'rim_bolts',
-      arms: [{ deg: -10, halfW: 0.27 }],
-      caliper: { deg: -92, dist: 0.56, rad: 0.32 },
-      fender: { startDeg: -165, endDeg: -35, minR: 0.85 },
-    },
-    front: {
-      cx: 0.8971,
-      cy: 0.8995,
-      rH: 0.0986,
+      cx: 0.1120,
+      cy: 0.9005,
+      rH: 0.0955,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.21,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.57,
-      arms: [{ deg: -156, halfW: 0.26 }],
-      fender: { startDeg: -150, endDeg: -40, minR: 0.85 },
+      rotorScale: 0.62,
+      cleanInnerR: 0.64,
+      arms: [{ deg: -12, halfW: 0.32, len: 1.35 }],
+      caliper: { deg: -115, dist: 0.56, rad: 0.28 },
+      fender: { startDeg: -175, endDeg: -38, minR: 0.90 },
+    },
+    front: {
+      cx: 0.8967,
+      cy: 0.9009,
+      rH: 0.0973,
+      ellipseX: 1.0,
+      symmetryDeg: 60,
+      hubKeepR: 0.21,
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -156, halfW: 0.30, len: 1.35 }],
+      fender: { startDeg: -162, endDeg: -45, minR: 0.90 },
     },
   },
   m2: {
     rear: {
-      cx: 0.104,
-      cy: 0.9079,
+      cx: 0.1038,
+      cy: 0.9068,
       rH: 0.0825,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.57,
-      arms: [{ deg: -14, halfW: 0.26 }],
-      fender: { startDeg: -150, endDeg: -20, minR: 0.88 },
+      rotorScale: 0.56,
+      cleanInnerR: 0.57,
+      arms: [{ deg: -1, halfW: 0.38, len: 1.35 }],
+      fender: { startDeg: -152, endDeg: -18, minR: 0.94 },
     },
     front: {
-      cx: 0.897,
-      cy: 0.9019,
-      rH: 0.0866,
+      cx: 0.8972,
+      cy: 0.9082,
+      rH: 0.0810,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.19,
       rotorStyle: 'g2pro_disc',
       rotorScale: 0.56,
-      arms: [{ deg: -98, halfW: 0.22 }],
-      fender: { startDeg: -170, endDeg: -28, minR: 0.88 },
+      cleanInnerR: 0.57,
+      arms: [{ deg: -98, halfW: 0.24 }],
+      fender: { startDeg: -170, endDeg: -26, minR: 0.90 },
     },
   },
   g77: {
     rear: {
-      cx: 0.1348,
-      cy: 0.8825,
-      rH: 0.1128,
+      cx: 0.1322,
+      cy: 0.8835,
+      rH: 0.1105,
+      ellipseX: 0.995,
+      symmetryDeg: 60,
+      hubKeepR: 0.21,
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.54,
+      cleanInnerR: 0.55,
+      arms: [{ deg: -2, halfW: 0.36 }],
+      fender: { startDeg: 158, endDeg: -12, minR: 0.82 },
+    },
+    front: {
+      cx: 0.8927,
+      cy: 0.8924,
+      rH: 0.1043,
+      ellipseX: 1.004,
       symmetryDeg: 60,
       hubKeepR: 0.2,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.56, // sits neatly inside yellow rim ring
-      arms: [{ deg: 0, halfW: 0.23 }],
-      fender: { startDeg: -168, endDeg: -15, minR: 0.92 },
-    },
-    front: {
-      cx: 0.8929,
-      cy: 0.8926,
-      rH: 0.1037,
-      symmetryDeg: 60,
-      hubKeepR: 0.2,
-      rotorStyle: 'rim_bolts',
-      arms: [{ deg: -99, halfW: 0.2 }],
-      fender: { startDeg: -168, endDeg: -32, minR: 0.92 },
+      rotorScale: 0.55,
+      cleanInnerR: 0.57,
+      arms: [{ deg: -99, halfW: 0.22 }],
+      fender: { startDeg: -168, endDeg: -32, minR: 0.90 },
     },
   },
   wish01: {
     rear: {
-      cx: 0.155,
+      cx: 0.1566,
       cy: 0.7897,
-      rH: 0.2078,
-      ellipseX: 1.005,
+      rH: 0.2100,
+      ellipseX: 1.007,
       symmetryDeg: 60,
       hubKeepR: 0.13,
-      rotorStyle: 'moto_spokes', // Real knobby tire & orange rim + dead-centered transparent wire spokes & wave rotor (zero 8-мерка!)
-      cleanInnerR: 0.61,
-      spokeOuterR: 0.635,
+      rotorStyle: 'moto_spokes',
+      cleanInnerR: 0.635,
+      spokeOuterR: 0.648,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 145,
       arms: [
         { deg: -11, halfW: 0.17 },
         { deg: 3, halfW: 0.14, len: 1.15 },
@@ -193,186 +227,217 @@ export const SCOOTER_WHEEL_CONFIGS: Record<ScooterId, ScooterWheelConfig> = {
       caliper: { deg: -55, dist: 0.36, rad: 0.17 },
     },
     front: {
-      cx: 0.8435,
-      cy: 0.7815,
-      rH: 0.212,
-      ellipseX: 0.99,
+      cx: 0.8421,
+      cy: 0.7822,
+      rH: 0.2135,
+      ellipseX: 0.975,
       symmetryDeg: 60,
       hubKeepR: 0.13,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.62,
-      spokeOuterR: 0.635,
+      cleanInnerR: 0.712,
+      spokeOuterR: 0.725,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 20,
       arms: [{ deg: -110, halfW: 0.15 }],
       caliper: { deg: 170, dist: 0.34, rad: 0.16 },
     },
   },
   wish02pro: {
     rear: {
-      cx: 0.173,
-      cy: 0.7515,
-      rH: 0.2385,
-      ellipseX: 1.022, // Pixel-measured concentric fit — zero 8-мерка wobble and zero ghost crescent
+      cx: 0.1758,
+      cy: 0.7525,
+      rH: 0.2425,
+      ellipseX: 0.996,
       symmetryDeg: 60,
       hubKeepR: 0.125,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.64,
-      spokeOuterR: 0.655,
+      cleanInnerR: 0.725,
+      spokeOuterR: 0.738,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 145,
       arms: [
-        { deg: -17, halfW: 0.155 },
-        { deg: 5, halfW: 0.12, len: 1.15 },
+        { deg: -16, halfW: 0.18 },
+        { deg: 6, halfW: 0.13, len: 1.15 },
       ],
-      caliper: { deg: -60, dist: 0.36, rad: 0.17 },
+      caliper: { deg: 174, dist: 0.44, rad: 0.22 },
     },
     front: {
-      cx: 0.8257,
-      cy: 0.734,
-      rH: 0.251,
-      ellipseX: 0.962, // Pixel-measured concentric fit — front rim spins dead-center
+      cx: 0.8248,
+      cy: 0.7364,
+      rH: 0.2528,
+      ellipseX: 0.950,
       symmetryDeg: 60,
       hubKeepR: 0.125,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.65,
-      spokeOuterR: 0.665,
+      cleanInnerR: 0.770,
+      spokeOuterR: 0.782,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 20,
       arms: [{ deg: -112, halfW: 0.145 }],
       caliper: { deg: 168, dist: 0.34, rad: 0.16 },
     },
   },
   surron: {
     rear: {
-      cx: 0.171,
-      cy: 0.7302,
-      rH: 0.268,
-      ellipseX: 1.032, // True pixel-centered fit for Sur-Ron rear tire & black rim
+      cx: 0.1715,
+      cy: 0.7308,
+      rH: 0.2735,
+      ellipseX: 1.016,
       symmetryDeg: 60,
       hubKeepR: 0.12,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.705,
-      spokeOuterR: 0.72,
+      cleanInnerR: 0.768,
+      spokeOuterR: 0.780,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 145,
       arms: [
-        { deg: -18, halfW: 0.14 },
-        { deg: 5, halfW: 0.12, len: 1.15 },
+        { deg: -18, halfW: 0.16 },
+        { deg: 6, halfW: 0.12, len: 1.12 },
       ],
       caliper: { deg: -48, dist: 0.35, rad: 0.15 },
     },
     front: {
-      cx: 0.8283,
-      cy: 0.7299,
-      rH: 0.2688,
-      ellipseX: 1.03,
+      cx: 0.8288,
+      cy: 0.7346,
+      rH: 0.2725,
+      ellipseX: 1.015,
       symmetryDeg: 60,
       hubKeepR: 0.12,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.715,
-      spokeOuterR: 0.73,
+      cleanInnerR: 0.768,
+      spokeOuterR: 0.780,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 20,
       arms: [{ deg: -114, halfW: 0.135 }],
       caliper: { deg: 165, dist: 0.34, rad: 0.15 },
     },
   },
   starkvarg: {
     rear: {
-      cx: 0.1595,
-      cy: 0.7385,
-      rH: 0.2585,
-      ellipseX: 0.985, // Locked dead-center on rear silver axle — zero 8-мерка wobble
+      cx: 0.1610,
+      cy: 0.7363,
+      rH: 0.2580,
+      ellipseX: 1.011,
       symmetryDeg: 60,
       hubKeepR: 0.125,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.675,
-      spokeOuterR: 0.695,
+      cleanInnerR: 0.688,
+      spokeOuterR: 0.702,
       preserveBrightSpokes: true,
-      arms: [{ deg: -14, halfW: 0.155 }],
+      preserveKnobby: true,
+      sectorDeg: 145,
+      arms: [{ deg: -14, halfW: 0.165 }],
       caliper: { deg: -60, dist: 0.34, rad: 0.16 },
     },
     front: {
-      cx: 0.8366,
-      cy: 0.7311,
-      rH: 0.2625,
-      ellipseX: 0.979,
+      cx: 0.8342,
+      cy: 0.7293,
+      rH: 0.2650,
+      ellipseX: 0.997,
       symmetryDeg: 60,
       hubKeepR: 0.125,
       rotorStyle: 'moto_spokes',
-      cleanInnerR: 0.705,
-      spokeOuterR: 0.72,
+      cleanInnerR: 0.748,
+      spokeOuterR: 0.760,
       preserveBrightSpokes: true,
+      preserveKnobby: true,
+      sectorDeg: 20,
       arms: [{ deg: -115, halfW: 0.145 }],
       caliper: { deg: 162, dist: 0.35, rad: 0.16 },
     },
   },
   f3: {
     rear: {
-      cx: 0.1095,
-      cy: 0.8992,
-      rH: 0.0985,
+      cx: 0.1111,
+      cy: 0.8966,
+      rH: 0.0997,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.21,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.56, // fits cleanly inside F3's orange rim stripe
-      arms: [{ deg: -21, halfW: 0.27 }],
-      fender: { startDeg: -165, endDeg: -32, minR: 0.86 },
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -16, halfW: 0.30, len: 1.35 }],
+      fender: { startDeg: -175, endDeg: -32, minR: 0.88 },
     },
     front: {
-      cx: 0.8942,
-      cy: 0.8994,
-      rH: 0.0987,
+      cx: 0.8947,
+      cy: 0.8966,
+      rH: 0.0997,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.21,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.56, // fits cleanly inside F3's orange rim stripe
-      arms: [{ deg: -157, halfW: 0.27 }],
-      fender: { startDeg: -145, endDeg: -38, minR: 0.86 },
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -154, halfW: 0.30, len: 1.35 }],
+      fender: { startDeg: -155, endDeg: -35, minR: 0.90 },
     },
   },
   g2max: {
     rear: {
-      cx: 0.1045,
-      cy: 0.8995,
-      rH: 0.0986,
-      symmetryDeg: 60,
-      hubKeepR: 0.2,
-      rotorStyle: 'rim_bolts',
-      arms: [{ deg: -24, halfW: 0.25 }],
-      caliper: { deg: -92, dist: 0.56, rad: 0.28 },
-    },
-    front: {
-      cx: 0.8945,
-      cy: 0.8991,
-      rH: 0.0991,
+      cx: 0.1050,
+      cy: 0.9002,
+      rH: 0.0979,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.57,
-      arms: [{ deg: -152, halfW: 0.25 }],
-      caliper: { deg: -102, dist: 0.52, rad: 0.23 },
+      rotorScale: 0.58,
+      cleanInnerR: 0.60,
+      arms: [{ deg: -18, halfW: 0.30, len: 1.35 }],
+      caliper: { deg: -65, dist: 0.56, rad: 0.26 },
+    },
+    front: {
+      cx: 0.8931,
+      cy: 0.8989,
+      rH: 0.0993,
+      ellipseX: 1.0,
+      symmetryDeg: 60,
+      hubKeepR: 0.2,
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [
+        { deg: -152, halfW: 0.28, len: 1.35 },
+        { deg: -112, halfW: 0.20, len: 1.25 },
+      ],
     },
   },
   teverun: {
     rear: {
       cx: 0.1077,
-      cy: 0.9049,
-      rH: 0.0914,
+      cy: 0.9064,
+      rH: 0.0908,
+      ellipseX: 1.004,
       symmetryDeg: 60,
       hubKeepR: 0.21,
-      rotorStyle: 'rim_bolts',
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.58,
+      cleanInnerR: 0.60,
       arms: [
-        { deg: -12, halfW: 0.26 },
-        { deg: -142, halfW: 0.15 },
+        { deg: -12, halfW: 0.30 },
+        { deg: -145, halfW: 0.20 },
       ],
-      caliper: { deg: -88, dist: 0.56, rad: 0.3 },
-      fender: { startDeg: -155, endDeg: -32, minR: 0.87 },
+      caliper: { deg: -88, dist: 0.56, rad: 0.32 },
+      fender: { startDeg: 168, endDeg: -30, minR: 0.86 },
     },
     front: {
-      cx: 0.9012,
+      cx: 0.9016,
       cy: 0.9073,
-      rH: 0.0908,
+      rH: 0.0919,
+      ellipseX: 0.986,
       symmetryDeg: 60,
       hubKeepR: 0.21,
-      rotorStyle: 'rim_bolts',
-      arms: [{ deg: -156, halfW: 0.26 }],
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.58,
+      cleanInnerR: 0.60,
+      arms: [{ deg: -156, halfW: 0.28 }],
       caliper: { deg: -108, dist: 0.54, rad: 0.28 },
       fender: { startDeg: -145, endDeg: -40, minR: 0.87 },
     },
@@ -380,96 +445,114 @@ export const SCOOTER_WHEEL_CONFIGS: Record<ScooterId, ScooterWheelConfig> = {
   g2ultra: {
     rear: {
       cx: 0.1207,
-      cy: 0.9019,
-      rH: 0.0972,
+      cy: 0.8994,
+      rH: 0.0960,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.21,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.56, // sits neatly inside orange rim ring
-      arms: [{ deg: -15, halfW: 0.25 }],
-      fender: { startDeg: -162, endDeg: -42, minR: 0.8 },
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -15, halfW: 0.28, len: 1.35 }],
+      fender: { startDeg: -175, endDeg: -38, minR: 0.90 },
     },
     front: {
-      cx: 0.8946,
-      cy: 0.9031,
-      rH: 0.095,
+      cx: 0.8944,
+      cy: 0.9037,
+      rH: 0.0940,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.21,
       rotorStyle: 'g2pro_disc',
-      rotorScale: 0.56, // sits neatly inside orange rim ring
-      arms: [{ deg: -150, halfW: 0.25 }],
+      rotorScale: 0.55,
+      cleanInnerR: 0.56,
+      arms: [{ deg: -145, halfW: 0.28, len: 1.35 }],
+      fender: { startDeg: -155, endDeg: -85, minR: 0.95 },
     },
   },
   g2pro: {
     rear: {
       cx: 0.1673,
-      cy: 0.8965,
-      rH: 0.0995,
+      cy: 0.8909,
+      rH: 0.1012,
+      ellipseX: 1.015,
       symmetryDeg: 60,
       hubKeepR: 0.22,
-      rotorStyle: 'none', // Gold standard — untouched real ventilated rotor!
-      arms: [{ deg: -31, halfW: 0.28 }],
-      caliper: { deg: -88, dist: 0.56, rad: 0.3 },
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.59,
+      cleanInnerR: 0.61,
+      arms: [{ deg: -31, halfW: 0.29 }],
+      caliper: { deg: -88, dist: 0.56, rad: 0.30 },
     },
     front: {
-      cx: 0.8901,
-      cy: 0.8924,
-      rH: 0.102,
+      cx: 0.8893,
+      cy: 0.8891,
+      rH: 0.1053,
+      ellipseX: 0.990,
       symmetryDeg: 60,
       hubKeepR: 0.22,
-      rotorStyle: 'none', // Gold standard — untouched real ventilated rotor!
-      arms: [{ deg: -58, halfW: 0.27 }],
-      caliper: { deg: -108, dist: 0.54, rad: 0.3 },
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.59,
+      cleanInnerR: 0.61,
+      arms: [{ deg: -58, halfW: 0.28 }],
+      caliper: { deg: -108, dist: 0.54, rad: 0.30 },
     },
   },
   thunder3: {
     rear: {
-      cx: 0.1312,
-      cy: 0.8912,
-      rH: 0.1028,
+      cx: 0.1326,
+      cy: 0.8903,
+      rH: 0.1022,
+      ellipseX: 0.990,
       symmetryDeg: 60,
       hubKeepR: 0.21,
-      rotorStyle: 'g2pro_disc', // Dead-centered ventilated silver brake rotor inside real Dualtron tire
-      rotorScale: 0.56,
-      cleanInnerR: 0.56,
-      preserveBrightSpokes: true,
-      arms: [{ deg: -40, halfW: 0.24 }],
-      caliper: { deg: -102, dist: 0.56, rad: 0.26 },
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.58,
+      cleanInnerR: 0.60,
+      arms: [{ deg: -40, halfW: 0.26 }],
+      caliper: { deg: -102, dist: 0.56, rad: 0.28 },
       fender: { startDeg: -175, endDeg: -45, minR: 0.86 },
     },
     front: {
-      cx: 0.8861,
-      cy: 0.8913,
-      rH: 0.1018,
+      cx: 0.8855,
+      cy: 0.8926,
+      rH: 0.0988,
+      ellipseX: 1.008,
       symmetryDeg: 60,
       hubKeepR: 0.21,
-      rotorStyle: 'rim_bolts', // Preserves iconic crisp white Dualtron front rim ring & adds machined hub bolts
-      preserveBrightSpokes: true,
-      arms: [{ deg: -138, halfW: 0.22 }],
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.57,
+      cleanInnerR: 0.59,
+      arms: [{ deg: -138, halfW: 0.24 }],
       fender: { startDeg: -145, endDeg: -42, minR: 0.88 },
     },
   },
   g4max: {
     rear: {
-      cx: 0.1149,
-      cy: 0.8862,
-      rH: 0.1138,
+      cx: 0.1158,
+      cy: 0.8916,
+      rH: 0.1078,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
-      rotorStyle: 'none', // HD G4 Max already has crisp real ventilated silver brake rotor!
-      arms: [{ deg: -14, halfW: 0.27 }],
-      caliper: { deg: -88, dist: 0.56, rad: 0.25 },
-      fender: { startDeg: -158, endDeg: -55, minR: 0.88 },
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.59,
+      cleanInnerR: 0.61,
+      arms: [{ deg: -10, halfW: 0.31, len: 1.35 }],
+      fender: { startDeg: 156, endDeg: -26, minR: 0.96 },
     },
     front: {
-      cx: 0.8864,
-      cy: 0.8888,
-      rH: 0.1112,
+      cx: 0.8537,
+      cy: 0.8932,
+      rH: 0.1078,
+      ellipseX: 1.0,
       symmetryDeg: 60,
       hubKeepR: 0.2,
-      rotorStyle: 'none', // HD G4 Max already has crisp real ventilated silver brake rotor!
-      arms: [{ deg: -163, halfW: 0.27 }],
-      caliper: { deg: -92, dist: 0.56, rad: 0.25 },
+      rotorStyle: 'g2pro_disc',
+      rotorScale: 0.59,
+      cleanInnerR: 0.61,
+      arms: [{ deg: -145, halfW: 0.30, len: 1.35 }],
+      caliper: { deg: -135, dist: 0.49, rad: 0.19 },
     },
   },
 };
@@ -756,73 +839,71 @@ function bakeG2ProWheelDetails(
       ctx.fill();
     }
   } else if (style === 'moto_spokes') {
-    // High-precision motocross spoked wheel: dead-centered crossed stainless spokes, spoke nipples,
-    // crisp inner rim lip, scalloped wave brake rotor & CNC hub (100% radial symmetry = zero 8-мерка wobble!)
-    const spokeOuter = R * (spec.spokeOuterR ?? 0.635);
-    const hubR = R * 0.205;
+    // Realistic motocross spoked wheel: fine metallic crossed stainless spokes, brass/steel nipples seated
+    // flush into a crisp dark inner rim bead, subtle recessed gunmetal wave rotor & CNC hub.
+    const spokeOuter = R * (spec.spokeOuterR ?? 0.65);
+    const hubR = R * 0.195;
 
-    // 1) Far-side crossed wire spokes (subtle metallic depth)
+    // 1) Far-side crossed stainless wire spokes
     ctx.lineCap = 'round';
     for (let i = 0; i < 18; i++) {
       const a = (i * Math.PI * 2) / 18;
-      const twist = i % 2 === 0 ? 0.26 : -0.26;
-      ctx.strokeStyle = 'rgba(128, 138, 152, 0.78)';
-      ctx.lineWidth = Math.max(1.0, R * 0.016);
+      const twist = i % 2 === 0 ? 0.27 : -0.27;
+      ctx.strokeStyle = 'rgba(105, 116, 130, 0.78)';
+      ctx.lineWidth = Math.max(0.9, R * 0.012);
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * (hubR * 0.96), Math.sin(a) * (hubR * 0.96));
+      ctx.moveTo(Math.cos(a) * (hubR * 0.94), Math.sin(a) * (hubR * 0.94));
       ctx.lineTo(Math.cos(a + twist) * spokeOuter, Math.sin(a + twist) * spokeOuter);
       ctx.stroke();
     }
 
-    // 2) Near-side bright stainless steel wire spokes + spoke nipples along the inner rim bed
+    // 2) Near-side stainless steel wire spokes + nipples seated inside the rim bed
     for (let i = 0; i < 18; i++) {
       const a = (i * Math.PI * 2) / 18 + Math.PI / 18;
-      const twist = i % 2 === 0 ? -0.25 : 0.25;
+      const twist = i % 2 === 0 ? -0.26 : 0.26;
       const endAng = a + twist;
-      ctx.strokeStyle = i % 2 === 0 ? 'rgba(228, 236, 245, 0.94)' : 'rgba(176, 186, 200, 0.88)';
-      ctx.lineWidth = Math.max(1.15, R * 0.019);
+      ctx.strokeStyle = i % 2 === 0 ? 'rgba(198, 208, 220, 0.90)' : 'rgba(154, 165, 180, 0.85)';
+      ctx.lineWidth = Math.max(1.0, R * 0.0135);
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * (hubR * 0.98), Math.sin(a) * (hubR * 0.98));
+      ctx.moveTo(Math.cos(a) * (hubR * 0.96), Math.sin(a) * (hubR * 0.96));
       ctx.lineTo(Math.cos(endAng) * spokeOuter, Math.sin(endAng) * spokeOuter);
       ctx.stroke();
 
-      // Machined spoke nipple where spoke meets rim
-      ctx.fillStyle = '#dce4ee';
+      ctx.fillStyle = '#c8d2df';
       ctx.beginPath();
       ctx.arc(
         Math.cos(endAng) * (spokeOuter * 0.985),
         Math.sin(endAng) * (spokeOuter * 0.985),
-        Math.max(1.0, R * 0.017),
+        Math.max(0.9, R * 0.013),
         0,
         Math.PI * 2
       );
       ctx.fill();
     }
 
-    // Subtle crisp inner rim bead ring to lock the spoke ends cleanly into the real rim
-    ctx.strokeStyle = 'rgba(210, 220, 232, 0.34)';
-    ctx.lineWidth = Math.max(1.1, R * 0.018);
+    // Crisp inner rim bead seam seal (eliminates any sub-pixel halo along real rim inner edge)
+    ctx.strokeStyle = 'rgba(16, 20, 26, 0.82)';
+    ctx.lineWidth = Math.max(1.6, R * 0.024);
     ctx.beginPath();
     ctx.arc(0, 0, spokeOuter, 0, Math.PI * 2);
     ctx.stroke();
 
-    // 3) Scalloped motocross wave brake rotor (0.29R .. 0.43R)
-    const rotorR = R * 0.43;
-    const rotorIn = R * 0.305;
+    // 3) Subtle recessed gunmetal wave brake rotor (0.24R .. 0.37R)
+    const rotorR = R * 0.37;
+    const rotorIn = R * 0.255;
     const rotorMid = (rotorR + rotorIn) * 0.5;
     const rotorGrad = ctx.createRadialGradient(0, 0, rotorIn, 0, 0, rotorR);
-    rotorGrad.addColorStop(0, '#8d98a8');
-    rotorGrad.addColorStop(0.55, '#c2ccd8');
-    rotorGrad.addColorStop(1, '#98a3b2');
+    rotorGrad.addColorStop(0, '#5a6472');
+    rotorGrad.addColorStop(0.55, '#8c97a6');
+    rotorGrad.addColorStop(1, '#687280');
     ctx.strokeStyle = rotorGrad;
-    ctx.lineWidth = Math.max(2.2, rotorR - rotorIn);
+    ctx.lineWidth = Math.max(2.0, rotorR - rotorIn);
     ctx.beginPath();
     ctx.arc(0, 0, rotorMid, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Outer wave-disc petal notches
-    ctx.strokeStyle = 'rgba(18, 24, 32, 0.72)';
-    ctx.lineWidth = Math.max(1.2, R * 0.022);
+    ctx.strokeStyle = 'rgba(16, 21, 28, 0.72)';
+    ctx.lineWidth = Math.max(1.0, R * 0.018);
     for (let i = 0; i < 6; i++) {
       const a = (i * Math.PI) / 3 + 0.18;
       ctx.beginPath();
@@ -830,46 +911,44 @@ function bakeG2ProWheelDetails(
       ctx.stroke();
     }
 
-    // 6 curved CNC rotor carrier arms from hub to disc
-    ctx.strokeStyle = '#9aa5b5';
-    ctx.lineWidth = Math.max(1.6, R * 0.034);
+    ctx.strokeStyle = '#6f7a89';
+    ctx.lineWidth = Math.max(1.4, R * 0.028);
     for (let i = 0; i < 6; i++) {
       const a = (i * Math.PI) / 3;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * (hubR * 0.88), Math.sin(a) * (hubR * 0.88));
+      ctx.moveTo(Math.cos(a) * (hubR * 0.86), Math.sin(a) * (hubR * 0.86));
       ctx.quadraticCurveTo(
-        Math.cos(a + 0.08) * (hubR * 1.25),
-        Math.sin(a + 0.08) * (hubR * 1.25),
+        Math.cos(a + 0.08) * (hubR * 1.18),
+        Math.sin(a + 0.08) * (hubR * 1.18),
         Math.cos(a + 0.2) * (rotorIn * 1.03),
         Math.sin(a + 0.2) * (rotorIn * 1.03)
       );
       ctx.stroke();
     }
 
-    // 12 ventilated rotor cooling slots
-    ctx.fillStyle = '#171d26';
+    ctx.fillStyle = '#141922';
     for (let i = 0; i < 12; i++) {
       const a = (i * Math.PI) / 6;
       ctx.beginPath();
-      ctx.arc(Math.cos(a) * rotorMid, Math.sin(a) * rotorMid, Math.max(1.1, R * 0.021), 0, Math.PI * 2);
+      ctx.arc(Math.cos(a) * rotorMid, Math.sin(a) * rotorMid, Math.max(1.0, R * 0.017), 0, Math.PI * 2);
       ctx.fill();
     }
 
     // 4) Center CNC hub flange + 6 stainless bolts
-    ctx.fillStyle = '#222933';
+    ctx.fillStyle = '#1d232d';
     ctx.beginPath();
     ctx.arc(0, 0, hubR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(205, 216, 228, 0.58)';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(170, 182, 198, 0.5)';
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.arc(0, 0, hubR, 0, Math.PI * 2);
     ctx.stroke();
     for (let i = 0; i < 6; i++) {
       const a = (i * Math.PI) / 3;
-      ctx.fillStyle = '#d6dfea';
+      ctx.fillStyle = '#bac4d2';
       ctx.beginPath();
-      ctx.arc(Math.cos(a) * (hubR * 0.72), Math.sin(a) * (hubR * 0.72), Math.max(1.15, R * 0.023), 0, Math.PI * 2);
+      ctx.arc(Math.cos(a) * (hubR * 0.72), Math.sin(a) * (hubR * 0.72), Math.max(1.0, R * 0.02), 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -981,8 +1060,8 @@ function refineWheelCenter(
   shiftX = ((sumCos - meanR * biasCos) * 2) / count;
   shiftY = ((sumSin - meanR * biasSin) * 2) / count;
 
-  // Clamp shift conservatively so we never wander away from the true axle bolt
-  const maxShift = R * 0.032;
+  // Clamp shift tightly since base centers are already pixel-fitted
+  const maxShift = R * 0.008;
   shiftX = Math.max(-maxShift, Math.min(maxShift, shiftX));
   shiftY = Math.max(-maxShift, Math.min(maxShift, shiftY));
 
@@ -1011,10 +1090,45 @@ function resolveRefinedWheelSpec(
   };
 }
 
+function stripStudioWhite(
+  sr: number,
+  sg: number,
+  sb: number,
+  sa: number,
+  dist: number,
+  R: number,
+  spec: WheelCircleSpec
+): number {
+  if (sa <= 0) return 0;
+  const maxCh = Math.max(sr, sg, sb);
+  const minCh = Math.min(sr, sg, sb);
+  const sat = maxCh - minCh;
+  if (dist > R * 0.74 && minCh > 135 && sat < 34) {
+    return 0;
+  }
+  if (spec.cleanInnerR) {
+    // Everything outside cleanInnerR is rim/tire: strip bright studio fringe cleanly
+    if (minCh > 165 && sat < 24 && dist < R * (spec.cleanInnerR + 0.06)) {
+      return 0;
+    }
+    if (sa < 220 && minCh > 180 && sat < 20) {
+      return 0;
+    }
+    return sa;
+  }
+  if (!spec.preserveBrightSpokes) {
+    if ((sa < 245 && minCh > 150 && sat < 28) || (minCh > 195 && sat < 22)) {
+      return 0;
+    }
+  } else if (sa < 215 && minCh > 205 && sat < 18) {
+    return 0;
+  }
+  return sa;
+}
+
 /**
- * Extracts the wheel from the original scooter PNG and enforces exact mathematical rotational
- * symmetry (12-fold circularization on the outer rim & rubber tire + K-fold spoke symmetry on
- * the inner hub/rotor) so EVERY wheel rolls 100% concentrically with ZERO eccentric wobble!
+ * Extracts the wheel from the original scooter PNG with crisp single-sector rotor/spoke
+ * reconstruction (zero blurry 6-way averaging) and clean circular/knobby tire preservation.
  */
 function buildUntouchedWheelCanvas(
   srcData: Uint8ClampedArray,
@@ -1028,9 +1142,9 @@ function buildUntouchedWheelCanvas(
   const ellipseX = spec.ellipseX ?? 1;
   const mask = buildMask(spec, R);
 
-  const isMoto = spec.rotorStyle === 'moto_spokes';
-  const maxR = R * (isMoto ? 0.992 : 0.996);
-  const canvasRadius = R * 1.02;
+  const isKnobby = Boolean(spec.preserveKnobby);
+  const maxR = R * (isKnobby ? 1.018 : 0.996);
+  const canvasRadius = R * (isKnobby ? 1.04 : 1.02);
   const size = Math.max(16, Math.ceil(canvasRadius * 2) + 2);
   const half = size * 0.5;
   // Exact padScale so drawImage(-rDraw, -rDraw, rDraw*2, rDraw*2) matches body pixel scale 1:1
@@ -1046,11 +1160,15 @@ function buildUntouchedWheelCanvas(
   const out = outImg.data;
 
   const symCount = Math.max(5, Math.round(360 / (spec.symmetryDeg ?? 60)));
-  const outerRingSym = 12; // 12-fold circular symmetry for rim & tire eliminates all flat-spots & lighting wobble
+  const outerRingSym = 12;
   const sampleC: [number, number, number, number] = [0, 0, 0, 0];
   const centerCleanR = R * ((spec.hubKeepR ?? 0.2) + 0.03);
   const cleanInnerPx = spec.cleanInnerR ? R * spec.cleanInnerR : 0;
-  const tireSymStartR = cleanInnerPx > 0 ? cleanInnerPx : R * 0.58;
+  const tireSymStartR = cleanInnerPx > 0 ? cleanInnerPx : R * 0.72;
+  const sectorStep = (Math.PI * 2) / symCount;
+  const sectorCenterRad = ((spec.sectorDeg ?? 90) * Math.PI) / 180;
+  const sectorStartRad = sectorCenterRad - sectorStep * 0.5;
+  const useSharpSector = spec.sectorDeg !== undefined;
 
   for (let y = 0; y < size; y++) {
     const dy = y + 0.5 - half;
@@ -1061,12 +1179,10 @@ function buildUntouchedWheelCanvas(
 
       const idx = (y * size + x) * 4;
 
-      // Clear eccentric 3D-offset inner chain/sprocket/rotor zone before baking dead-centered spokes/disc
       if (cleanInnerPx > 0 && dist < cleanInnerPx) {
         continue;
       }
 
-      // Center axle core is covered by stationary axle bolt/swingarm tip on bodyCanvas
       if (dist < centerCleanR) {
         out[idx] = 28;
         out[idx + 1] = 33;
@@ -1076,104 +1192,210 @@ function buildUntouchedWheelCanvas(
       }
 
       const baseAng = Math.atan2(dy, dx);
-      const isOuterRing = dist >= tireSymStartR;
-      const folds = isOuterRing ? outerRingSym : symCount;
-      const step = (Math.PI * 2) / folds;
-
-      let sumR = 0;
-      let sumG = 0;
-      let sumB = 0;
-      let sumA = 0;
-      let validSamples = 0;
-
-      // Fallback tracker if every fold happens to be near an arm/fender
-      let bestOcc = 99;
-      let fbR = 0;
-      let fbG = 0;
-      let fbB = 0;
-      let fbA = 0;
-
-      for (let k = 0; k < folds; k++) {
-        const candAng = baseAng + k * step;
-        // On the outermost rubber edge, skip the bottom studio floor flat-spot (68..112 deg)
-        if (dist > R * 0.84) {
-          const normDeg = (((candAng * 180) / Math.PI) % 360 + 360) % 360;
-          if (normDeg > 68 && normDeg < 112) continue;
-        }
-
-        const cdx = Math.cos(candAng) * dist * ellipseX;
-        const cdy = Math.sin(candAng) * dist;
-        const fx = cx + cdx;
-        const fy = cy + cdy;
-        if (fx < 1 || fy < 1 || fx >= srcW - 2 || fy >= srcH - 2) continue;
-
-        const candOcc = getOcclusion(cdx, cdy, dist, mask, 5.5, 0.24);
-        sampleBilinear(srcData, srcW, srcH, fx, fy, sampleC);
-
-        let sr = sampleC[0];
-        let sg = sampleC[1];
-        let sb = sampleC[2];
-        let sa = sampleC[3];
-
-        // Strip studio white background halo & honeycomb white artifacts BEFORE averaging
-        if (sa > 0) {
-          const maxCh = Math.max(sr, sg, sb);
-          const minCh = Math.min(sr, sg, sb);
-          const sat = maxCh - minCh;
-          if (dist > R * 0.73 && minCh > 135 && sat < 34) {
-            sa = 0;
-          } else if (
-            !spec.preserveBrightSpokes &&
-            ((sa < 235 && minCh > 155 && sat < 30) || (minCh > 232 && sat < 18))
-          ) {
-            sa = 0;
-          } else if (spec.preserveBrightSpokes && sa < 210 && minCh > 220 && sat < 15) {
-            sa = 0;
-          }
-        }
-
-        if (candOcc < bestOcc && sa > 5) {
-          bestOcc = candOcc;
-          fbR = sr;
-          fbG = sg;
-          fbB = sb;
-          fbA = sa;
-        }
-
-        if (candOcc <= 0.03) {
-          if (sa > 1) {
-            sumR += sr * sa;
-            sumG += sg * sa;
-            sumB += sb * sa;
-            sumA += sa;
-          }
-          validSamples++;
-        }
-      }
-
       let r = 0;
       let g = 0;
       let b = 0;
       let a = 0;
 
-      if (validSamples > 0 && sumA > 0.5) {
-        r = sumR / sumA;
-        g = sumG / sumA;
-        b = sumB / sumA;
-        a = sumA / validSamples;
-        // Keep outer rubber rim crisp & solid where majority of angles have tire rubber
-        if (isOuterRing && dist < maxR - 2.0 && a > 120) {
-          a = Math.min(255, a * 1.18);
+      if (isKnobby) {
+        // 18-fold crisp sector tiling from a 100% unoccluded clean tire/rim arc:
+        // preserves sharp real knobby treads & colored rims while guaranteeing ZERO 8-мерка wobble,
+        // ZERO bottom flat-spot, ZERO arm notches, and ZERO swingarm smudges!
+        const knobbyFolds = 18;
+        const kStep = (Math.PI * 2) / knobbyFolds;
+        const kStart = sectorCenterRad - kStep * 0.5;
+        const rawDelta = baseAng - kStart;
+        const phase = ((rawDelta % kStep) + kStep) % kStep;
+        const candAng = kStart + phase;
+        const cdx = Math.cos(candAng) * dist * ellipseX;
+        const cdy = Math.sin(candAng) * dist;
+        const fx = cx + cdx;
+        const fy = cy + cdy;
+        if (fx >= 1 && fy >= 1 && fx < srcW - 2 && fy < srcH - 2) {
+          sampleBilinear(srcData, srcW, srcH, fx, fy, sampleC);
+          r = sampleC[0];
+          g = sampleC[1];
+          b = sampleC[2];
+          a = stripStudioWhite(r, g, b, sampleC[3], dist, R, spec);
+
+          // Tiny 2.2-degree edge crossfade across the sector seam so adjacent lugs join seamlessly
+          const seamRad = 0.038;
+          if (phase < seamRad || phase > kStep - seamRad) {
+            const altAng = phase < seamRad ? candAng + kStep : candAng - kStep;
+            const adx = Math.cos(altAng) * dist * ellipseX;
+            const ady = Math.sin(altAng) * dist;
+            const afx = cx + adx;
+            const afy = cy + ady;
+            if (afx >= 1 && afy >= 1 && afx < srcW - 2 && afy < srcH - 2) {
+              const s2: [number, number, number, number] = [0, 0, 0, 0];
+              sampleBilinear(srcData, srcW, srcH, afx, afy, s2);
+              const a2 = stripStudioWhite(s2[0], s2[1], s2[2], s2[3], dist, R, spec);
+              const t =
+                phase < seamRad
+                  ? (seamRad - phase) / (seamRad * 2)
+                  : (phase - (kStep - seamRad)) / (seamRad * 2);
+              const w1 = 1 - t;
+              const totA = a * w1 + a2 * t;
+              if (totA > 1) {
+                r = (r * a * w1 + s2[0] * a2 * t) / totA;
+                g = (g * a * w1 + s2[1] * a2 * t) / totA;
+                b = (b * a * w1 + s2[2] * a2 * t) / totA;
+                a = totA;
+              } else {
+                a = 0;
+              }
+            }
+          }
         }
-      } else if (bestOcc < 99) {
-        r = fbR;
-        g = fbG;
-        b = fbB;
-        a = fbA;
+      } else if (useSharpSector && dist < tireSymStartR) {
+        // Sharp single-sector extraction centered around clean unoccluded bottom sector (zero 6-way blur!)
+        const rawDelta = baseAng - sectorStartRad;
+        const phase = ((rawDelta % sectorStep) + sectorStep) % sectorStep;
+        const candAng = sectorStartRad + phase;
+        const cdx = Math.cos(candAng) * dist * ellipseX;
+        const cdy = Math.sin(candAng) * dist;
+        const fx = cx + cdx;
+        const fy = cy + cdy;
+
+        const candOcc =
+          fx >= 1 && fy >= 1 && fx < srcW - 2 && fy < srcH - 2
+            ? getOcclusion(cdx, cdy, dist, mask, 5.5, 0.24)
+            : 1;
+
+        if (candOcc <= 0.03) {
+          sampleBilinear(srcData, srcW, srcH, fx, fy, sampleC);
+          r = sampleC[0];
+          g = sampleC[1];
+          b = sampleC[2];
+          a = stripStudioWhite(r, g, b, sampleC[3], dist, R, spec);
+
+          // Tiny 3.5-degree edge crossfade right across the sector seam so repeats join invisibly
+          const seamRad = 0.06;
+          if (phase < seamRad || phase > sectorStep - seamRad) {
+            const altAng = phase < seamRad ? candAng + sectorStep : candAng - sectorStep;
+            const adx = Math.cos(altAng) * dist * ellipseX;
+            const ady = Math.sin(altAng) * dist;
+            const afx = cx + adx;
+            const afy = cy + ady;
+            if (
+              afx >= 1 &&
+              afy >= 1 &&
+              afx < srcW - 2 &&
+              afy < srcH - 2 &&
+              getOcclusion(adx, ady, dist, mask, 5.5, 0.24) <= 0.03
+            ) {
+              const s2: [number, number, number, number] = [0, 0, 0, 0];
+              sampleBilinear(srcData, srcW, srcH, afx, afy, s2);
+              const a2 = stripStudioWhite(s2[0], s2[1], s2[2], s2[3], dist, R, spec);
+              const t = phase < seamRad ? (seamRad - phase) / (seamRad * 2) : (phase - (sectorStep - seamRad)) / (seamRad * 2);
+              const w1 = 1 - t;
+              const totA = a * w1 + a2 * t;
+              if (totA > 1) {
+                r = (r * a * w1 + s2[0] * a2 * t) / totA;
+                g = (g * a * w1 + s2[1] * a2 * t) / totA;
+                b = (b * a * w1 + s2[2] * a2 * t) / totA;
+                a = totA;
+              } else {
+                a = 0;
+              }
+            }
+          }
+        } else {
+          // Fallback to cleanest unoccluded fold if primary sector hits a caliper/arm
+          let bestOcc = 99;
+          for (let k = 0; k < symCount; k++) {
+            const altAng = baseAng + k * sectorStep;
+            const adx = Math.cos(altAng) * dist * ellipseX;
+            const ady = Math.sin(altAng) * dist;
+            const afx = cx + adx;
+            const afy = cy + ady;
+            if (afx < 1 || afy < 1 || afx >= srcW - 2 || afy >= srcH - 2) continue;
+            const occ = getOcclusion(adx, ady, dist, mask, 5.5, 0.24);
+            if (occ < bestOcc) {
+              bestOcc = occ;
+              sampleBilinear(srcData, srcW, srcH, afx, afy, sampleC);
+              r = sampleC[0];
+              g = sampleC[1];
+              b = sampleC[2];
+              a = stripStudioWhite(r, g, b, sampleC[3], dist, R, spec);
+              if (occ <= 0.03) break;
+            }
+          }
+        }
+      } else {
+        const isOuterRing = dist >= tireSymStartR;
+        const folds = isOuterRing ? outerRingSym : symCount;
+        const step = (Math.PI * 2) / folds;
+
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let sumA = 0;
+        let validSamples = 0;
+
+        let bestOcc = 99;
+        let fbR = 0;
+        let fbG = 0;
+        let fbB = 0;
+        let fbA = 0;
+
+        for (let k = 0; k < folds; k++) {
+          const candAng = baseAng + k * step;
+          if (dist > R * 0.84) {
+            const normDeg = (((candAng * 180) / Math.PI) % 360 + 360) % 360;
+            if (normDeg > 66 && normDeg < 114) continue;
+          }
+
+          const cdx = Math.cos(candAng) * dist * ellipseX;
+          const cdy = Math.sin(candAng) * dist;
+          const fx = cx + cdx;
+          const fy = cy + cdy;
+          if (fx < 1 || fy < 1 || fx >= srcW - 2 || fy >= srcH - 2) continue;
+
+          const candOcc = getOcclusion(cdx, cdy, dist, mask, 5.5, 0.24);
+          sampleBilinear(srcData, srcW, srcH, fx, fy, sampleC);
+
+          const sr = sampleC[0];
+          const sg = sampleC[1];
+          const sb = sampleC[2];
+          const sa = stripStudioWhite(sr, sg, sb, sampleC[3], dist, R, spec);
+
+          if (candOcc < bestOcc && sa > 5) {
+            bestOcc = candOcc;
+            fbR = sr;
+            fbG = sg;
+            fbB = sb;
+            fbA = sa;
+          }
+
+          if (candOcc <= 0.03) {
+            if (sa > 1) {
+              sumR += sr * sa;
+              sumG += sg * sa;
+              sumB += sb * sa;
+              sumA += sa;
+            }
+            validSamples++;
+          }
+        }
+
+        if (validSamples > 0 && sumA > 0.5) {
+          r = sumR / sumA;
+          g = sumG / sumA;
+          b = sumB / sumA;
+          a = sumA / validSamples;
+          if (isOuterRing && dist < maxR - 2.0 && a > 120) {
+            a = Math.min(255, a * 1.18);
+          }
+        } else if (bestOcc < 99) {
+          r = fbR;
+          g = fbG;
+          b = fbB;
+          a = fbA;
+        }
       }
 
-      // Clean circular anti-alias fade on the outermost 1.8px edge
-      if (dist > maxR - 1.8) {
+      if (!isKnobby && dist > maxR - 1.8) {
         a *= Math.max(0, (maxR - dist) / 1.8);
       }
 
@@ -1203,7 +1425,7 @@ function punchWheelFromBody(
   const cy = spec.cy * h;
   const R = spec.rH * h;
   const ellipseX = spec.ellipseX ?? 1;
-  const punchR = R * 1.038;
+  const punchR = R * (spec.preserveKnobby ? 1.095 : 1.068);
   const hubR = R * (spec.hubKeepR ?? 0.2);
   const mask = buildMask(spec, R);
 
@@ -1280,9 +1502,233 @@ function hasOpaquePixels(canvas: HTMLCanvasElement): boolean {
   }
 }
 
+function parseHexRgb(hex: string | undefined): [number, number, number] | null {
+  if (!hex || typeof hex !== 'string') return null;
+  const clean = hex.replace('#', '').trim();
+  const full =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function mixRgb(
+  r: number,
+  g: number,
+  b: number,
+  tr: number,
+  tg: number,
+  tb: number,
+  weight: number
+): [number, number, number] {
+  const w = Math.max(0, Math.min(1, weight));
+  return [
+    Math.round(r + (tr - r) * w),
+    Math.round(g + (tg - g) * w),
+    Math.round(b + (tb - b) * w),
+  ];
+}
+
+function paintWithTone(
+  r: number,
+  g: number,
+  b: number,
+  targetRgb: [number, number, number],
+  lum: number,
+  norm: number,
+  blendWeight: number,
+  specularBoost = 0.28
+): [number, number, number] {
+  const tLum = (0.299 * targetRgb[0] + 0.587 * targetRgb[1] + 0.114 * targetRgb[2]) / 255;
+  // Adaptive shadow floor so bright paints (white, yellow, cyan, red) stay crisp & bright on dark anodized frames,
+  // while dark paints (black, graphite) keep deep satin shadows
+  const shadowFloor = 0.24 + 0.52 * Math.min(1, tLum * 1.15);
+  const highlightSpan = 1.06 - shadowFloor;
+  const clampedNorm = Math.max(0, Math.min(1.25, norm));
+  const shade = shadowFloor + highlightSpan * Math.pow(Math.min(1, clampedNorm), 0.72) + Math.max(0, clampedNorm - 1) * 0.18;
+  // Crisp white specular edge sheen on metallic bevels
+  const spec = lum > 135 ? Math.min(0.42, ((lum - 135) / 120) * specularBoost) : 0;
+  const tr = Math.min(255, targetRgb[0] * shade + (255 - targetRgb[0] * shade) * spec);
+  const tg = Math.min(255, targetRgb[1] * shade + (255 - targetRgb[1] * shade) * spec);
+  const tb = Math.min(255, targetRgb[2] * shade + (255 - targetRgb[2] * shade) * spec);
+  return mixRgb(r, g, b, tr, tg, tb, blendWeight);
+}
+
+export function applyScooterPaintToPixels(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  id: ScooterId,
+  paint?: ScooterPaint
+) {
+  if (!paint) return;
+  const spec = getScooter(id);
+  const singleMode = spec.paintMode === 'single';
+  const pRgb = parseHexRgb(paint.primary);
+  const sRgb = singleMode ? null : parseHexRgb(paint.secondary);
+  if (!pRgb && !sRgb) return;
+
+  const cfg = SCOOTER_WHEEL_CONFIGS[id];
+  const rCx = cfg ? cfg.rear.cx * w : -9999;
+  const rCy = cfg ? cfg.rear.cy * h : -9999;
+  const rRad = cfg ? cfg.rear.rH * h * 1.04 : 0;
+  const fCx = cfg ? cfg.front.cx * w : -9999;
+  const fCy = cfg ? cfg.front.cy * h : -9999;
+  const fRad = cfg ? cfg.front.rH * h * 1.04 : 0;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const a = data[idx + 3];
+      if (a < 20) continue;
+
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      const diff = mx - mn;
+      const sat = mx > 0 ? diff / mx : 0;
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+      // Smooth chromatic weight down to anti-aliased fringe (eliminates orange/purple outline halos)
+      const chromaDiffW = Math.max(0, Math.min(1, (diff - 10) / 22));
+      const chromaSatW = Math.max(0, Math.min(1, (sat - 0.08) / 0.14));
+      const chromaValW = Math.max(0, Math.min(1, (mx - 24) / 26));
+      const chromaStrength = chromaDiffW * chromaSatW * chromaValW;
+      const isChromatic = chromaStrength > 0.18;
+
+      if (singleMode) {
+        // Kugoo G2 Pro: 1 custom frame/bugel color (chromatic purple areas)
+        if (pRgb && isChromatic) {
+          const val = Math.max(0, Math.min(1.15, (mx - 24) / 210));
+          const [nr, ng, nb] = paintWithTone(r, g, b, pRgb, lum, val, chromaStrength, 0.34);
+          data[idx] = nr;
+          data[idx + 1] = ng;
+          data[idx + 2] = nb;
+        }
+        continue;
+      }
+
+      // Skip F3's glowing cyan underglow strip so only painted accents change
+      if (spec.skipCyanLed && chromaStrength > 0.12 && g > r + 35 && b > r + 40 && b > 110) {
+        continue;
+      }
+
+      // Secondary accent color (chromatic parts everywhere including rim stripes)
+      if (sRgb && isChromatic) {
+        const val = Math.max(0, Math.min(1.15, (mx - 24) / 210));
+        const [nr, ng, nb] = paintWithTone(r, g, b, sRgb, lum, val, chromaStrength, 0.34);
+        data[idx] = nr;
+        data[idx + 1] = ng;
+        data[idx + 2] = nb;
+        continue;
+      }
+
+      // Never recolor black rubber tires inside wheel circles with primary body paint
+      const inWheel =
+        (cfg &&
+          (Math.hypot(x - rCx, y - rCy) <= rRad || Math.hypot(x - fCx, y - fCy) <= fRad)) ||
+        false;
+      if (inWheel) continue;
+
+      if (spec.twoToneMono) {
+        // Two-tone monochrome sprites (C3, Sur-Ron, Stark VARG):
+        // lum 18..118 = primary body/frame; lum 110..248 = secondary fairing/silver/fork
+        if (pRgb && chromaStrength < 0.35 && lum >= 16 && lum < 120) {
+          const norm = Math.max(0, Math.min(1.2, (lum - 14) / 86));
+          const edgeLow = Math.min(1, (lum - 16) / 14);
+          const edgeHigh = lum > 106 ? Math.max(0, (120 - lum) / 14) : 1;
+          const [nr, ng, nb] = paintWithTone(
+            r,
+            g,
+            b,
+            pRgb,
+            lum,
+            norm,
+            edgeLow * edgeHigh * (1 - chromaStrength * 0.6),
+            0.24
+          );
+          data[idx] = nr;
+          data[idx + 1] = ng;
+          data[idx + 2] = nb;
+        } else if (sRgb && chromaStrength < 0.35 && lum >= 108 && lum <= 250) {
+          const norm = Math.max(0, Math.min(1.2, (lum - 98) / 132));
+          const edgeLow = lum < 122 ? Math.max(0, (lum - 108) / 14) : 1;
+          const [nr, ng, nb] = paintWithTone(
+            r,
+            g,
+            b,
+            sRgb,
+            lum,
+            norm,
+            edgeLow * (1 - chromaStrength * 0.6),
+            0.3
+          );
+          data[idx] = nr;
+          data[idx + 1] = ng;
+          data[idx + 2] = nb;
+        }
+        continue;
+      }
+
+      // Standard dual-color scooter/pitbike: primary paints neutral frame/body/stem/fenders (lum 17..235)
+      if (pRgb && chromaStrength < 0.45 && lum >= 17 && lum <= 238) {
+        const norm = Math.max(0, Math.min(1.22, (lum - 16) / 96));
+        const edgeLow = Math.min(1, (lum - 17) / 12);
+        const edgeHigh = lum > 214 ? Math.max(0, (238 - lum) / 24) : 1;
+        const neutralMask = 1 - chromaStrength * 0.7;
+        const [nr, ng, nb] = paintWithTone(
+          r,
+          g,
+          b,
+          pRgb,
+          lum,
+          norm,
+          edgeLow * edgeHigh * neutralMask,
+          0.26
+        );
+        data[idx] = nr;
+        data[idx + 1] = ng;
+        data[idx + 2] = nb;
+      }
+    }
+  }
+}
+
+export function renderPaintedScooterCanvas(
+  img: HTMLImageElement,
+  id: ScooterId,
+  paint?: ScooterPaint,
+  targetCanvas?: HTMLCanvasElement | null
+): HTMLCanvasElement | null {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const cv = targetCanvas ?? document.createElement('canvas');
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  if (paint && (paint.primary || paint.secondary)) {
+    const imgData = ctx.getImageData(0, 0, w, h);
+    applyScooterPaintToPixels(imgData.data, w, h, id, paint);
+    ctx.putImageData(imgData, 0, 0);
+  }
+  return cv;
+}
+
 export function prepareScooterWheelRig(
   id: ScooterId,
-  img: HTMLImageElement
+  img: HTMLImageElement,
+  paint?: ScooterPaint
 ): PreparedScooterRig | null {
   const cfg = SCOOTER_WHEEL_CONFIGS[id];
   if (!cfg || !img.naturalWidth || !img.naturalHeight) return null;
@@ -1299,6 +1745,9 @@ export function prepareScooterWheelRig(
 
     bCtx.drawImage(img, 0, 0, w, h);
     const srcImg = bCtx.getImageData(0, 0, w, h);
+    if (paint && (paint.primary || paint.secondary)) {
+      applyScooterPaintToPixels(srcImg.data, w, h, id, paint);
+    }
     const cleanSrc = new Uint8ClampedArray(srcImg.data);
 
     const rearSpec = resolveRefinedWheelSpec(cleanSrc, w, h, cfg.rear);
@@ -1342,5 +1791,4 @@ export function prepareScooterWheelRig(
   } catch {
     // Graceful fallback to raw sprite if canvas readback fails on restricted WebView
     return null;
-  }
 }

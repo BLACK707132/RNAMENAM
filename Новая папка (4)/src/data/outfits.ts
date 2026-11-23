@@ -712,6 +712,7 @@ export interface StyledRiderPose {
   kneeling?: number;
   frontFootAngle?: number;
   backFootAngle?: number;
+  hideBackLeg?: boolean;
 }
 
 function roundedRectPath(
@@ -1520,20 +1521,22 @@ export function drawStyledRider(
     true
   );
 
-  drawLegGarment(
-    ctx,
-    { x: pose.hip.x - 1.5 * scale, y: pose.hip.y },
-    pose.backKnee,
-    pose.backFoot,
-    scale,
-    outfit,
-    shoeAccent,
-    stripeColor,
-    flatFeet,
-    true,
-    0,
-    pose.backFootAngle
-  );
+  if (!pose.hideBackLeg) {
+    drawLegGarment(
+      ctx,
+      { x: pose.hip.x - 1.5 * scale, y: pose.hip.y },
+      pose.backKnee,
+      pose.backFoot,
+      scale,
+      outfit,
+      shoeAccent,
+      stripeColor,
+      flatFeet,
+      true,
+      0,
+      pose.backFootAngle
+    );
+  }
 
   drawLegGarment(
     ctx,

@@ -11,9 +11,12 @@ import {
   Trophy,
   AlertCircle,
   CheckCircle2,
+  Trash2,
 } from 'lucide-react';
 import {
+  checkUsernameExists,
   clearAuthSession,
+  deleteMyAccount,
   loginAccount,
   registerAccount,
   type AuthUser,
@@ -27,6 +30,7 @@ interface AuthModalProps {
   initialTab?: 'register' | 'login';
   onAuthSuccess: (user: AuthUser, serverSave: SyncSavePayload, isNewRegistration: boolean) => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
   onOpenLeaderboard: () => void;
   onClose: () => void;
 }
@@ -38,6 +42,7 @@ export function AuthModal({
   initialTab = 'register',
   onAuthSuccess,
   onLogout,
+  onDeleteAccount,
   onOpenLeaderboard,
   onClose,
 }: AuthModalProps) {
@@ -48,7 +53,38 @@ export function AuthModal({
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [confirmDeleteSelf, setConfirmDeleteSelf] = useState(false);
+  const [deletingSelf, setDeletingSelf] = useState(false);
+  const [usernameTaken, setUsernameTaken] = useState(false);
+  const [checkingUser, setCheckingUser] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (tab !== 'register' || user) {
+      setUsernameTaken(false);
+      setCheckingUser(false);
+      return;
+    }
+    const clean = username.trim().replace(/^@+/, '');
+    if (!/^[a-zA-Z0-9а-яА-ЯёЁ_-]{3,18}$/.test(clean)) {
+      setUsernameTaken(false);
+      setCheckingUser(false);
+      return;
+    }
+    let active = true;
+    setCheckingUser(true);
+    const timer = window.setTimeout(() => {
+      checkUsernameExists(clean).then((res) => {
+        if (!active) return;
+        setCheckingUser(false);
+        setUsernameTaken(res.exists);
+      });
+    }, 260);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [tab, user, username]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,6 +109,11 @@ export function AuthModal({
     }
     if (tab === 'register' && password !== confirmPassword) {
       setError('Пароли не совпадают.');
+      return;
+    }
+
+    if (tab === 'register' && usernameTaken) {
+      setError('Этот юз уже существует! Перейди в «Уже есть юз», чтобы войти.');
       return;
     }
 
@@ -101,6 +142,20 @@ export function AuthModal({
   const handleLogoutClick = () => {
     clearAuthSession();
     onLogout();
+    onClose();
+  };
+
+  const handleConfirmDeleteAccount = async () => {
+    if (deletingSelf) return;
+    setError('');
+    setDeletingSelf(true);
+    const res = await deleteMyAccount();
+    setDeletingSelf(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    onDeleteAccount();
     onClose();
   };
 
@@ -171,6 +226,13 @@ export function AuthModal({
               )}
             </div>
 
+            {error && (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#ff7b72]">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
               <button
                 type="button"
@@ -186,11 +248,49 @@ export function AuthModal({
               <button
                 type="button"
                 onClick={handleLogoutClick}
-                className="w-full h-11 rounded-xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-400/35 text-white/80 hover:text-red-200 font-bold text-sm flex items-center justify-center gap-2 transition"
+                className="w-full h-11 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/85 font-bold text-sm flex items-center justify-center gap-2 transition"
               >
                 <LogOut className="w-4 h-4" />
                 Выйти из аккаунта
               </button>
+
+              {!confirmDeleteSelf ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmDeleteSelf(true);
+                    setError('');
+                  }}
+                  className="w-full h-10 rounded-xl bg-red-500/10 hover:bg-red-500/18 border border-red-400/30 text-[#ff8b82] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Удалить аккаунт
+                </button>
+              ) : (
+                <div className="rounded-xl bg-red-950/55 border border-red-400/40 p-3 space-y-2.5">
+                  <p className="text-xs text-[#ffb4ae] font-semibold leading-snug">
+                    Удалить аккаунт <b className="text-white">@{user.username}</b> навсегда? Он исчезнет из базы и Топа богатых.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={deletingSelf}
+                      onClick={() => setConfirmDeleteSelf(false)}
+                      className="h-9 rounded-lg bg-white/8 hover:bg-white/15 text-white/85 font-bold text-xs transition"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingSelf}
+                      onClick={handleConfirmDeleteAccount}
+                      className="h-9 rounded-lg bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white font-extrabold text-xs transition"
+                    >
+                      {deletingSelf ? 'Удаляем...' : 'Да, удалить'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -250,9 +350,17 @@ export function AuthModal({
                   />
                 </div>
                 {tab === 'register' && (
-                  <p className="text-[11px] text-white/45 mt-1">
-                    От 3 до 18 символов: буквы, цифры, _ или -
-                  </p>
+                  usernameTaken ? (
+                    <p className="text-[11px] font-semibold text-[#ff7b72] mt-1">
+                      Этот юз уже существует! Перейди в «Уже есть юз», чтобы войти.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-white/45 mt-1">
+                      {checkingUser
+                        ? 'Проверяем юз...'
+                        : 'От 3 до 18 символов: буквы, цифры, _ или -'}
+                    </p>
+                  )
                 )}
               </div>
 
@@ -337,7 +445,7 @@ export function AuthModal({
 
               <button
                 type="submit"
-                disabled={loading || !username.trim() || !password}
+                disabled={loading || !username.trim() || !password || (tab === 'register' && usernameTaken)}
                 className="w-full h-12 rounded-xl bg-[#ff6a1a] hover:bg-[#ff7b33] disabled:opacity-40 text-white font-display font-bold text-base flex items-center justify-center gap-2 shadow-lg transition"
               >
                 {tab === 'register' ? (

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Volume2,
-  VolumeX,
   ShoppingBag,
   Play,
   Pause,
@@ -10,17 +8,15 @@ import {
   ArrowLeft,
   Shield,
   Settings,
+  Settings2,
   Shirt,
-  Gift,
   Trophy,
   Crown,
   User,
   UserPlus,
   Package,
-  Users,
   Send,
   Coins,
-  HelpCircle,
   ArrowLeftRight,
   Sun,
   Moon,
@@ -37,8 +33,8 @@ import { PromoModal } from './components/PromoModal';
 import { AuthModal } from './components/AuthModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { CaseModal, SCOOTER_CASE_PRICE } from './components/CaseModal';
-import { ClansModal } from './components/ClansModal';
 import { DonateModal } from './components/DonateModal';
+import { PaintModal, ScooterThumb } from './components/PaintModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { ControlTutorialOverlay } from './components/ControlTutorialOverlay';
 import {
@@ -52,7 +48,19 @@ import {
   type SyncSavePayload,
 } from './utils/accountApi';
 import { consumeIncomingUrlAction, loadWalletProfile } from './utils/transfers';
-import { getScooter, SCOOTERS, type ScooterId } from './data/scooters';
+import {
+  getEffectiveScooterStats,
+  getScooter,
+  getScooterLight,
+  getSecondMotorPrice,
+  getVescPrice,
+  SCOOTERS,
+  VALID_LIGHT_IDS,
+  type LightId,
+  type ScooterId,
+  type ScooterPaint,
+  type ScooterPaintMap,
+} from './data/scooters';
 import {
   getHelmet,
   HELMETS,
@@ -85,6 +93,11 @@ interface SaveState {
   outfits: OutfitId[];
   curO: OutfitId;
   vip: boolean;
+  paints?: ScooterPaintMap;
+  lights: LightId[];
+  curLight: LightId;
+  vesc: ScooterId[];
+  motors: ScooterId[];
 }
 
 const STORAGE_KEY = 'ss';
@@ -92,6 +105,24 @@ const VALID_SCOOTERS: ScooterId[] = SCOOTERS.map((s) => s.id);
 const VALID_HELMETS: HelmetId[] = HELMETS.map((h) => h.id);
 const VALID_OUTFITS: OutfitId[] = OUTFITS.map((o) => o.id);
 const FREE_OUTFITS: OutfitId[] = OUTFITS.filter((o) => o.price === 0).map((o) => o.id);
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+function sanitizePaintMap(raw: unknown): ScooterPaintMap {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: ScooterPaintMap = {};
+  for (const id of VALID_SCOOTERS) {
+    const entry = (raw as Record<string, unknown>)[id];
+    if (!entry || typeof entry !== 'object') continue;
+    const p = (entry as Record<string, unknown>).primary;
+    const s = (entry as Record<string, unknown>).secondary;
+    const cleanP = typeof p === 'string' && HEX_COLOR_RE.test(p) ? p : undefined;
+    const cleanS = typeof s === 'string' && HEX_COLOR_RE.test(s) ? s : undefined;
+    if (cleanP || cleanS) {
+      out[id] = { ...(cleanP ? { primary: cleanP } : {}), ...(cleanS ? { secondary: cleanS } : {}) };
+    }
+  }
+  return out;
+}
 
 function loadState(): SaveState {
   runGlobalClientWipeOnce();
@@ -121,6 +152,21 @@ function loadState(): SaveState {
       const curO =
         parsed.curO && VALID_OUTFITS.includes(parsed.curO) ? parsed.curO : 'black_stant';
 
+      const lights = Array.isArray(parsed.lights)
+        ? parsed.lights.filter((id): id is LightId => VALID_LIGHT_IDS.includes(id))
+        : (['stock'] as LightId[]);
+      if (!lights.includes('stock')) lights.unshift('stock');
+      const curLight =
+        parsed.curLight && VALID_LIGHT_IDS.includes(parsed.curLight) && lights.includes(parsed.curLight)
+          ? parsed.curLight
+          : 'stock';
+      const vesc = Array.isArray(parsed.vesc)
+        ? parsed.vesc.filter((id): id is ScooterId => VALID_SCOOTERS.includes(id))
+        : [];
+      const motors = Array.isArray(parsed.motors)
+        ? parsed.motors.filter((id): id is ScooterId => VALID_SCOOTERS.includes(id))
+        : [];
+
       return {
         coins:
           typeof parsed.coins === 'number' && Number.isFinite(parsed.coins)
@@ -137,6 +183,11 @@ function loadState(): SaveState {
         outfits,
         curO,
         vip: Boolean(parsed.vip),
+        paints: sanitizePaintMap(parsed.paints),
+        lights,
+        curLight,
+        vesc,
+        motors,
       };
     }
   } catch {
@@ -152,6 +203,11 @@ function loadState(): SaveState {
     outfits: [...FREE_OUTFITS],
     curO: 'black_stant',
     vip: false,
+    paints: {},
+    lights: ['stock'],
+    curLight: 'stock',
+    vesc: [],
+    motors: [],
   };
 }
 
@@ -188,6 +244,23 @@ function normalizeServerSave(raw: SyncSavePayload): SaveState {
     ? (raw.curO as OutfitId)
     : 'black_stant';
 
+  const lights = Array.isArray(raw.lights)
+    ? raw.lights.filter((id): id is LightId => VALID_LIGHT_IDS.includes(id as LightId))
+    : (['stock'] as LightId[]);
+  if (!lights.includes('stock')) lights.unshift('stock');
+  const curLight =
+    raw.curLight &&
+    VALID_LIGHT_IDS.includes(raw.curLight as LightId) &&
+    lights.includes(raw.curLight as LightId)
+      ? (raw.curLight as LightId)
+      : 'stock';
+  const vesc = Array.isArray(raw.vesc)
+    ? raw.vesc.filter((id): id is ScooterId => VALID_SCOOTERS.includes(id as ScooterId))
+    : [];
+  const motors = Array.isArray(raw.motors)
+    ? raw.motors.filter((id): id is ScooterId => VALID_SCOOTERS.includes(id as ScooterId))
+    : [];
+
   return {
     coins:
       typeof raw.coins === 'number' && Number.isFinite(raw.coins)
@@ -204,6 +277,11 @@ function normalizeServerSave(raw: SyncSavePayload): SaveState {
     outfits,
     curO,
     vip: Boolean(raw.vip),
+    paints: sanitizePaintMap(raw.paints),
+    lights,
+    curLight,
+    vesc,
+    motors,
   };
 }
 
@@ -249,7 +327,7 @@ export default function App() {
   const [save, setSave] = useState<SaveState>(() => loadState());
   const saveRef = useRef<SaveState>(save);
   saveRef.current = save;
-  const [totalPlayers] = useState<number>(() => registerAndGetTotalPlayers());
+  const [totalPlayers, setTotalPlayers] = useState<number>(() => registerAndGetTotalPlayers());
   const [mode, setMode] = useState<GameMode>('menu');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promoOpen, setPromoOpen] = useState(false);
@@ -257,8 +335,8 @@ export default function App() {
   const [authInitTab, setAuthInitTab] = useState<'register' | 'login'>('register');
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [casesOpen, setCasesOpen] = useState(false);
-  const [clansOpen, setClansOpen] = useState(false);
   const [donateOpen, setDonateOpen] = useState(false);
+  const [paintOpen, setPaintOpen] = useState(false);
   const [onlinePlayersCount, setOnlinePlayersCount] = useState(1);
   const [kickNotice, setKickNotice] = useState<KickNotice | null>(null);
   const [paused, setPaused] = useState(false);
@@ -336,7 +414,10 @@ export default function App() {
           local.bestRun === 0 &&
           local.own.length <= 1 &&
           local.helmets.length <= 1;
-        if (isFreshLocal && (res.data.save.coins > 0 || res.data.save.own.length > 1 || res.data.save.vip)) {
+        if (
+          isFreshLocal &&
+          (res.data.save.coins > 0 || res.data.save.own.length > 1 || res.data.save.vip)
+        ) {
           setSave(normalizeServerSave(res.data.save));
         } else {
           // Always pick up server-authoritative VIP grant or admin coin adjustment
@@ -375,6 +456,17 @@ export default function App() {
       const res = await pingPresenceHeartbeat(clientId, currentScooter.name);
       if (active && res) {
         setOnlinePlayersCount(Math.max(1, res.onlinePlayersCount));
+        if (typeof res.totalVisits === 'number' && Number.isFinite(res.totalVisits)) {
+          setTotalPlayers((prev) => {
+            const next = Math.max(prev, Math.floor(res.totalVisits!));
+            try {
+              localStorage.setItem(VISITS_KEY, String(next));
+            } catch {
+              // Ignore storage write errors
+            }
+            return next;
+          });
+        }
       }
     };
     const onVisible = () => {
@@ -595,7 +687,6 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
     setTutorialOpen(false);
@@ -616,15 +707,31 @@ export default function App() {
 
   const openSettings = useCallback(() => {
     clearAllControls();
-    closeAllOverlays();
+    setPromoOpen(false);
+    setAuthOpen(false);
+    setLeaderboardOpen(false);
+    setCasesOpen(false);
+    setDonateOpen(false);
+    setTransferOpen(false);
+    setTutorialOpen(false);
+    setPaintOpen(false);
+    setCrashOverlay(false);
     setSettingsOpen(true);
-  }, [clearAllControls, closeAllOverlays]);
+  }, [clearAllControls]);
 
   const openPromo = useCallback(() => {
     clearAllControls();
-    closeAllOverlays();
+    setSettingsOpen(false);
+    setAuthOpen(false);
+    setLeaderboardOpen(false);
+    setCasesOpen(false);
+    setDonateOpen(false);
+    setTransferOpen(false);
+    setTutorialOpen(false);
+    setPaintOpen(false);
+    setCrashOverlay(false);
     setPromoOpen(true);
-  }, [clearAllControls, closeAllOverlays]);
+  }, [clearAllControls]);
 
   const closeTutorial = useCallback(() => {
     try {
@@ -666,7 +773,6 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
@@ -679,7 +785,6 @@ export default function App() {
     setPromoOpen(false);
     setAuthOpen(false);
     setLeaderboardOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
@@ -693,13 +798,12 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
     setDonateOpen(true);
   }, [clearAllControls]);
 
-  const openClans = useCallback(() => {
+  const openPaint = useCallback(() => {
     clearAllControls();
     setSettingsOpen(false);
     setPromoOpen(false);
@@ -709,11 +813,8 @@ export default function App() {
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
-    setClansOpen(true);
-    if (authUser) {
-      void syncProfile(saveRef.current);
-    }
-  }, [clearAllControls, authUser]);
+    setPaintOpen(true);
+  }, [clearAllControls]);
 
   const openHelmets = useCallback(() => {
     clearAllControls();
@@ -722,7 +823,6 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
@@ -736,7 +836,6 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferOpen(false);
     setCrashOverlay(false);
@@ -750,7 +849,6 @@ export default function App() {
     setAuthOpen(false);
     setLeaderboardOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setTransferInitTab(tab);
     setTransferPrefill(prefill);
@@ -765,7 +863,6 @@ export default function App() {
       setTransferOpen(false);
       setLeaderboardOpen(false);
       setCasesOpen(false);
-      setClansOpen(false);
       setDonateOpen(false);
       setAuthInitTab(tab);
       setAuthOpen(true);
@@ -780,7 +877,6 @@ export default function App() {
     setTransferOpen(false);
     setAuthOpen(false);
     setCasesOpen(false);
-    setClansOpen(false);
     setDonateOpen(false);
     setLeaderboardOpen(true);
     if (authUser) {
@@ -838,6 +934,88 @@ export default function App() {
       outfits: [...FREE_OUTFITS],
       curO: 'black_stant',
       vip: false,
+      paints: {},
+      lights: ['stock'],
+      curLight: 'stock',
+      vesc: [],
+      motors: [],
+    });
+  }, []);
+
+  const handleDeleteAccount = useCallback(() => {
+    handleLogout();
+    handleFullResetSelf();
+  }, [handleLogout, handleFullResetSelf]);
+
+  const handleSetSelfVip = useCallback((vip: boolean) => {
+    setSave((prev) => ({ ...prev, vip: Boolean(vip) }));
+  }, []);
+
+  const handleSetPaint = useCallback((scooterId: ScooterId, paint: ScooterPaint | null) => {
+    setSave((prev) => {
+      const nextPaints: ScooterPaintMap = { ...(prev.paints ?? {}) };
+      if (!paint || (!paint.primary && !paint.secondary)) {
+        delete nextPaints[scooterId];
+      } else {
+        nextPaints[scooterId] = paint;
+      }
+      return { ...prev, paints: nextPaints };
+    });
+  }, []);
+
+  const handleSelectLight = useCallback((id: LightId) => {
+    setSave((prev) => {
+      if (id !== 'stock' && !prev.lights.includes(id)) return prev;
+      return { ...prev, curLight: id };
+    });
+  }, []);
+
+  const handleBuyLight = useCallback((id: LightId) => {
+    const spec = getScooterLight(id);
+    setSave((prev) => {
+      if (prev.lights.includes(id) || spec.price === 0) {
+        return {
+          ...prev,
+          lights: prev.lights.includes(id) ? prev.lights : [...prev.lights, id],
+          curLight: id,
+        };
+      }
+      if (prev.coins < spec.price) return prev;
+      sound.playBuy();
+      return {
+        ...prev,
+        coins: prev.coins - spec.price,
+        lights: [...prev.lights, id],
+        curLight: id,
+      };
+    });
+  }, []);
+
+  const handleBuyVesc = useCallback((scooterId: ScooterId) => {
+    const s = getScooter(scooterId);
+    const price = getVescPrice(s);
+    setSave((prev) => {
+      if (prev.vesc.includes(scooterId) || prev.coins < price) return prev;
+      sound.playBuy();
+      return {
+        ...prev,
+        coins: prev.coins - price,
+        vesc: [...prev.vesc, scooterId],
+      };
+    });
+  }, []);
+
+  const handleBuySecondMotor = useCallback((scooterId: ScooterId) => {
+    const s = getScooter(scooterId);
+    const price = getSecondMotorPrice(s);
+    setSave((prev) => {
+      if (prev.motors.includes(scooterId) || prev.coins < price) return prev;
+      sound.playBuy();
+      return {
+        ...prev,
+        coins: prev.coins - price,
+        motors: [...prev.motors, scooterId],
+      };
     });
   }, []);
 
@@ -1079,8 +1257,8 @@ export default function App() {
         authOpen ||
         leaderboardOpen ||
         casesOpen ||
-        clansOpen ||
-        donateOpen
+        donateOpen ||
+        paintOpen
       )
         return;
       if (mode === 'play') {
@@ -1187,8 +1365,8 @@ export default function App() {
     authOpen,
     leaderboardOpen,
     casesOpen,
-    clansOpen,
     donateOpen,
+    paintOpen,
     tutorialOpen,
     crashOverlay,
     closeTutorial,
@@ -1225,6 +1403,10 @@ export default function App() {
         coins={save.coins}
         bestRun={save.bestRun}
         vip={save.vip}
+        paints={save.paints}
+        lightId={save.curLight}
+        hasVesc={save.vesc.includes(save.cur)}
+        hasSecondMotor={save.motors.includes(save.cur)}
         gasRef={gasRef}
         brakeRef={brakeRef}
         oneHandRef={oneHandRef}
@@ -1232,7 +1414,7 @@ export default function App() {
         kneeRef={kneeRef}
         stemFootRef={stemFootRef}
         runTrigger={runTrigger}
-        paused={paused || tutorialOpen}
+        paused={paused || tutorialOpen || settingsOpen || promoOpen}
         onBankCoins={handleBankCoins}
         onNewBest={handleNewBest}
         onCrashStart={handleCrashStart}
@@ -1240,7 +1422,7 @@ export default function App() {
         onAutoReleaseNoHands={handleAutoReleaseNoHands}
       />
 
-      {/* Top-right compact utility bar during gameplay (never collides with coins/angle bar) */}
+      {/* Top-right compact utility bar during gameplay (only Day/Night + Pause) */}
       {mode === 'play' && !paused && (
         <div
           className="fixed right-3 z-20 flex items-center gap-1.5"
@@ -1254,23 +1436,6 @@ export default function App() {
             className="h-10 w-10 flex items-center justify-center rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-[#ffd34d] border border-white/12 backdrop-blur-sm transition"
           >
             {timeOfDay === 'night' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4 text-sky-300" />}
-          </button>
-          <button
-            type="button"
-            onClick={openTutorial}
-            aria-label="Подсказка по управлению"
-            title="Управление"
-            className="h-10 w-10 flex items-center justify-center rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-[#ffc599] border border-white/12 backdrop-blur-sm transition"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={toggleMute}
-            aria-label={muted ? 'Включить звук' : 'Выключить звук'}
-            className="h-10 w-10 flex items-center justify-center rounded-xl bg-black/50 hover:bg-black/65 active:scale-95 text-white border border-white/12 backdrop-blur-sm transition"
-          >
-            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
           <button
             type="button"
@@ -1336,20 +1501,11 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={toggleMute}
+                  onClick={openSettings}
                   className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
                 >
-                  {muted ? (
-                    <>
-                      <VolumeX className="w-4 h-4 text-red-300" />
-                      Звук выкл
-                    </>
-                  ) : (
-                    <>
-                      <Volume2 className="w-4 h-4 text-emerald-300" />
-                      Звук вкл
-                    </>
-                  )}
+                  <Settings className="w-4 h-4 text-[#ff8b4a]" />
+                  Настройки
                 </button>
               </div>
 
@@ -1364,22 +1520,13 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={openTutorial}
-                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                  onClick={openMenu}
+                  className="h-11 rounded-xl bg-white/6 hover:bg-white/12 text-white/90 font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
                 >
-                  <HelpCircle className="w-4 h-4 text-[#ffc599]" />
-                  Управление
+                  <Home className="w-4 h-4" />
+                  В меню
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={openMenu}
-                className="w-full h-11 rounded-xl bg-white/6 hover:bg-white/12 text-white/90 font-bold text-sm flex items-center justify-center gap-2 border border-white/10 transition"
-              >
-                <Home className="w-4 h-4" />
-                В главное меню
-              </button>
             </div>
           </div>
         </div>
@@ -1671,12 +1818,16 @@ export default function App() {
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={openPromo}
-                  aria-label="Промокод"
-                  className="h-9 px-2.5 flex items-center justify-center gap-1.5 rounded-lg bg-[#ff6a1a]/18 hover:bg-[#ff6a1a]/28 border border-[#ff6a1a]/35 text-[#ffc599] text-xs font-bold transition"
+                  onClick={toggleTimeOfDay}
+                  aria-label={timeOfDay === 'night' ? 'Переключить на день' : 'Переключить на ночь'}
+                  title={timeOfDay === 'night' ? 'День' : 'Ночь'}
+                  className="h-9 w-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-[#ffd34d] transition"
                 >
-                  <Gift className="w-3.5 h-3.5 text-[#ff8b4a]" />
-                  Промокод
+                  {timeOfDay === 'night' ? (
+                    <Sun className="w-4 h-4" />
+                  ) : (
+                    <Moon className="w-4 h-4 text-sky-300" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -1686,14 +1837,6 @@ export default function App() {
                 >
                   <Settings className="w-4 h-4 text-[#ff8b4a]" />
                   <span className="hidden sm:inline">Настройки</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleMute}
-                  aria-label={muted ? 'Включить звук' : 'Выключить звук'}
-                  className="h-9 w-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-white/80 transition"
-                >
-                  {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                 </button>
               </div>
             </div>
@@ -1717,19 +1860,9 @@ export default function App() {
             {/* Current scooter & motocross helmet summary */}
             <div className="mb-5 rounded-xl bg-[#1e2631] border border-white/8 p-3.5 flex items-center gap-3.5 text-left">
               <div className="w-20 h-20 shrink-0 rounded-lg bg-[#e8edf3] flex items-center justify-center p-1.5">
-                <img
-                  src={currentScooter.spriteSrc}
-                  alt={currentScooter.name}
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    if (
-                      !e.currentTarget.dataset.fallback &&
-                      currentScooter.originalSrc !== currentScooter.spriteSrc
-                    ) {
-                      e.currentTarget.dataset.fallback = '1';
-                      e.currentTarget.src = currentScooter.originalSrc;
-                    }
-                  }}
+                <ScooterThumb
+                  scooter={currentScooter}
+                  paint={save.paints?.[currentScooter.id]}
                   className="w-full h-full object-contain drop-shadow-sm"
                 />
               </div>
@@ -1737,9 +1870,22 @@ export default function App() {
                 <div className="font-display text-lg font-bold text-white truncate">
                   {currentScooter.name}
                 </div>
-                <div className="text-xs text-white/70 font-mono-num">
-                  до {currentScooter.maxKmh} км/ч · Газ ×{currentScooter.power} · ×{currentScooter.multiplier}
-                </div>
+                {(() => {
+                  const curHasVesc = save.vesc.includes(currentScooter.id);
+                  const curHasMotor = save.motors.includes(currentScooter.id);
+                  const curStats = getEffectiveScooterStats(
+                    currentScooter,
+                    curHasVesc,
+                    curHasMotor
+                  );
+                  return (
+                    <div className="text-xs text-white/70 font-mono-num">
+                      до {curStats.maxKmh} км/ч · Газ ×{curStats.power} · ×{currentScooter.multiplier}
+                      {curHasVesc ? ' · Веск' : ''}
+                      {curHasMotor ? ' · 2-й мотор' : ''}
+                    </div>
+                  );
+                })()}
                 <div className="mt-2 pt-2 border-t border-white/8 flex items-center gap-2">
                   <HelmetIcon helmet={currentHelmet} className="w-8 h-7 shrink-0" />
                   <div className="min-w-0">
@@ -1772,14 +1918,22 @@ export default function App() {
                 Старт
               </button>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={openShop}
-                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap"
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-white/10 transition whitespace-nowrap px-2"
                 >
                   <ShoppingBag className="w-4 h-4 shrink-0" />
-                  Самокаты
+                  <span className="truncate">Самокаты</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openPaint}
+                  className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-sky-400/35 transition whitespace-nowrap px-2"
+                >
+                  <Settings2 className="w-4 h-4 shrink-0 text-sky-300" />
+                  <span className="truncate">Кастомизация</span>
                 </button>
                 <button
                   type="button"
@@ -1787,7 +1941,7 @@ export default function App() {
                   className="h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap px-2"
                 >
                   <Settings className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
-                  <span className="truncate">Вещи и погода</span>
+                  <span className="truncate">Вещи</span>
                 </button>
               </div>
 
@@ -1850,15 +2004,6 @@ export default function App() {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={openClans}
-                className="w-full h-11 rounded-xl bg-[#242e3b] hover:bg-[#2d3948] active:scale-[0.99] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 border border-[#ff6a1a]/30 transition whitespace-nowrap"
-              >
-                <Users className="w-4 h-4 shrink-0 text-[#ff8b4a]" />
-                Кланы
-              </button>
-
               <PWAInstallButton />
 
               <a
@@ -1899,6 +2044,14 @@ export default function App() {
                 </p>
               </div>
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={openPaint}
+                  className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl bg-sky-500/18 hover:bg-sky-500/28 text-sky-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-sky-400/40 transition whitespace-nowrap"
+                >
+                  <Settings2 className="w-4 h-4 text-sky-300" />
+                  Кастомизация
+                </button>
                 <button
                   type="button"
                   onClick={openDonate}
@@ -1942,19 +2095,10 @@ export default function App() {
                     }`}
                   >
                     <div className="w-full h-28 sm:h-32 rounded-lg bg-[#e8edf3] flex items-center justify-center p-2 mb-3 overflow-hidden">
-                      <img
-                        src={s.spriteSrc}
-                        alt={s.name}
-                        loading="eager"
-                        decoding="async"
+                      <ScooterThumb
+                        scooter={s}
+                        paint={owned ? save.paints?.[s.id] : undefined}
                         fetchPriority={idx < 6 ? 'high' : 'auto'}
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          if (!e.currentTarget.dataset.fallback && s.originalSrc !== s.spriteSrc) {
-                            e.currentTarget.dataset.fallback = '1';
-                            e.currentTarget.src = s.originalSrc;
-                          }
-                        }}
                         className="w-full h-full object-contain drop-shadow-sm"
                       />
                     </div>
@@ -1962,11 +2106,22 @@ export default function App() {
                     <div className="font-display font-bold text-base sm:text-lg text-white leading-tight">
                       {s.name}
                     </div>
-                    <div className="text-xs text-white/65 mt-1 mb-2.5 font-mono-num">
-                      до {s.maxKmh} км/ч · Газ ×{s.power} · ×{s.multiplier}
-                    </div>
+                    {(() => {
+                      const hasVesc = owned && save.vesc.includes(s.id);
+                      const hasMotor = owned && save.motors.includes(s.id);
+                      const stats = getEffectiveScooterStats(s, hasVesc, hasMotor);
+                      return (
+                        <div className="text-xs text-white/65 mt-1 mb-2.5 font-mono-num">
+                          до {stats.maxKmh} км/ч · Газ ×{stats.power} · ×{s.multiplier}
+                        </div>
+                      );
+                    })()}
 
-                    {s.scrapeKind === 'fender' ? (
+                    {s.scrapeKind === 'bugel' ? (
+                      <div className="mb-2.5 text-[10px] font-bold text-amber-300 bg-amber-500/12 border border-amber-400/25 rounded-md px-2 py-0.5">
+                        ⚡ Чирк бугелем ×1.45
+                      </div>
+                    ) : s.scrapeKind === 'fender' ? (
                       <div className="mb-2.5 text-[10px] font-bold text-amber-300 bg-amber-500/12 border border-amber-400/25 rounded-md px-2 py-0.5">
                         ⚡ Чирк крылом ×1.45
                       </div>
@@ -2137,11 +2292,15 @@ export default function App() {
           onOpenShop={openShop}
           onOpenOutfits={openOutfits}
           onOpenHelmets={openHelmets}
+          onOpenTutorial={openTutorial}
+          onOpenPromo={openPromo}
           totalPlayers={totalPlayers}
           coins={save.coins}
           authUser={authUser}
           currentScooterId={save.cur}
           ownedScooters={save.own}
+          ownedVesc={save.vesc}
+          ownedMotors={save.motors}
           ownedScootersCount={save.own.length}
           ownedHelmetsCount={save.helmets.length}
           ownedOutfitsCount={save.outfits.length}
@@ -2150,6 +2309,7 @@ export default function App() {
           onRemoveCoins={handleRemoveCoins}
           onResetCoins={handleResetCoins}
           onSetCoins={handleSetCoins}
+          onSetSelfVip={handleSetSelfVip}
           onAdminSelectScooter={handleAdminSelectScooter}
           onAdminUnlockAllScooters={handleAdminUnlockAllScooters}
           onFullResetSelf={handleFullResetSelf}
@@ -2204,21 +2364,6 @@ export default function App() {
           onBack={() => setCasesOpen(false)}
         />
       )}
-      {/* Clans Modal */}
-      {clansOpen && (
-        <ClansModal
-          user={authUser}
-          coins={save.coins}
-          onCoinsChanged={handleSetCoins}
-          onSyncBeforeAction={async () => {
-            if (authUser) {
-              await syncProfile(saveRef.current);
-            }
-          }}
-          onOpenRegister={() => openAuth('register')}
-          onClose={() => setClansOpen(false)}
-        />
-      )}
       {/* Donate Shop Modal (Telegram @durov0113) */}
       {donateOpen && (
         <DonateModal
@@ -2240,8 +2385,8 @@ export default function App() {
           onClose={() => setTransferOpen(false)}
         />
       )}
-      {/* First-Launch Controls Tutorial Overlay */}
-      {mode === 'play' && tutorialOpen && <ControlTutorialOverlay onClose={closeTutorial} />}
+      {/* Controls Tutorial Overlay */}
+      {tutorialOpen && <ControlTutorialOverlay onClose={closeTutorial} />}
       {/* Promo Codes Modal */}
       {promoOpen && (
         <PromoModal
@@ -2259,6 +2404,7 @@ export default function App() {
           initialTab={authInitTab}
           onAuthSuccess={handleAuthSuccess}
           onLogout={handleLogout}
+          onDeleteAccount={handleDeleteAccount}
           onOpenLeaderboard={openLeaderboard}
           onClose={() => setAuthOpen(false)}
         />
@@ -2268,9 +2414,32 @@ export default function App() {
         <LeaderboardModal
           user={authUser}
           localCoins={save.coins}
+          bestRun={save.bestRun}
+          curScooter={save.cur}
+          vip={save.vip}
           onOpenRegister={() => openAuth('register')}
           onRankLoaded={setMyRank}
           onClose={() => setLeaderboardOpen(false)}
+        />
+      )}
+      {/* Scooter Customization Modal (Paint, Headlights, VESC, 2nd Motor) */}
+      {paintOpen && (
+        <PaintModal
+          coins={save.coins}
+          currentScooterId={save.cur}
+          ownedScooters={save.own}
+          paints={save.paints ?? {}}
+          ownedLights={save.lights}
+          currentLight={save.curLight}
+          ownedVesc={save.vesc}
+          ownedMotors={save.motors}
+          onSetPaint={handleSetPaint}
+          onSelectLight={handleSelectLight}
+          onBuyLight={handleBuyLight}
+          onBuyVesc={handleBuyVesc}
+          onBuySecondMotor={handleBuySecondMotor}
+          onSelectScooter={handlePickScooter}
+          onClose={() => setPaintOpen(false)}
         />
       )}
     </div>
