@@ -18,6 +18,10 @@ interface AccountSave {
   paints?: Record<string, { primary?: string; secondary?: string }>;
   lights?: string[];
   curLight?: string;
+  underglows?: string[];
+  curUnderglow?: string;
+  akbs?: string[];
+  curAkb?: string;
   motors?: string[];
   flipped?: string[];
 }
@@ -518,9 +522,10 @@ function sanitizeSave(raw: unknown, preserveVip?: boolean): AccountSave {
   const curH = typeof s.curH === 'string' && helmets.includes(s.curH) ? s.curH : 'mx_start';
 
   const outfits = Array.isArray(s.outfits)
-    ? Array.from(new Set(s.outfits.filter((x): x is string => typeof x === 'string'))).slice(0, 30)
-    : ['black_stant', 'street_white'];
+    ? Array.from(new Set(s.outfits.filter((x): x is string => typeof x === 'string'))).slice(0, 48)
+    : ['black_stant', 'street_white', 'nike_af1_street'];
   if (!outfits.includes('black_stant')) outfits.unshift('black_stant');
+  if (!outfits.includes('nike_af1_street')) outfits.push('nike_af1_street');
   const curO = typeof s.curO === 'string' && outfits.includes(s.curO) ? s.curO : 'black_stant';
 
   const vesc = Array.isArray(s.vesc)
@@ -561,6 +566,42 @@ function sanitizeSave(raw: unknown, preserveVip?: boolean): AccountSave {
   const curLight =
     typeof s.curLight === 'string' && lights.includes(s.curLight) ? s.curLight : 'stock';
 
+  const validUnderglows = new Set([
+    'default',
+    'off',
+    'blue',
+    'cyan',
+    'purple',
+    'red',
+    'orange',
+    'lime',
+    'pink',
+    'white',
+    'gold',
+  ]);
+  const underglows = Array.isArray(s.underglows)
+    ? Array.from(
+        new Set(
+          s.underglows.filter((x): x is string => typeof x === 'string' && validUnderglows.has(x))
+        )
+      ).slice(0, 20)
+    : ['default', 'off'];
+  if (!underglows.includes('default')) underglows.unshift('default');
+  if (!underglows.includes('off')) underglows.push('off');
+  const curUnderglow =
+    typeof s.curUnderglow === 'string' && underglows.includes(s.curUnderglow)
+      ? s.curUnderglow
+      : 'default';
+
+  const validAkbs = new Set(['stock', 'akb_10', 'akb_20', 'akb_50']);
+  const akbs = Array.isArray(s.akbs)
+    ? Array.from(
+        new Set(s.akbs.filter((x): x is string => typeof x === 'string' && validAkbs.has(x)))
+      ).slice(0, 10)
+    : ['stock'];
+  if (!akbs.includes('stock')) akbs.unshift('stock');
+  const curAkb = typeof s.curAkb === 'string' && akbs.includes(s.curAkb) ? s.curAkb : 'stock';
+
   const motors = Array.isArray(s.motors)
     ? Array.from(new Set(s.motors.filter((x): x is string => typeof x === 'string'))).slice(0, 30)
     : [];
@@ -579,6 +620,10 @@ function sanitizeSave(raw: unknown, preserveVip?: boolean): AccountSave {
     paints,
     lights,
     curLight,
+    underglows,
+    curUnderglow,
+    akbs,
+    curAkb,
     motors,
   };
 }
@@ -627,12 +672,16 @@ function getFreshSave(): AccountSave {
     vesc: [],
     helmets: ['mx_start'],
     curH: 'mx_start',
-    outfits: ['black_stant', 'street_white'],
+    outfits: ['black_stant', 'street_white', 'nike_af1_street'],
     curO: 'black_stant',
     vip: false,
     paints: {},
     lights: ['stock'],
     curLight: 'stock',
+    underglows: ['default', 'off'],
+    curUnderglow: 'default',
+    akbs: ['stock'],
+    curAkb: 'stock',
     motors: [],
   };
 }
